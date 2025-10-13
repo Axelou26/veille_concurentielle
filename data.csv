@@ -1,0 +1,6 @@
+id,groupement,univers,intitule_lot,montant_global_estime,date_limite,statut,mots_cles
+1,RESAH,Médical,Équipements d'imagerie médicale,1500000,2025-12-31,En cours,"imagerie,radiologie,scanner"
+2,UNIHA,Informatique,Serveurs et stockage,800000,2025-11-30,Attribué,"informatique,serveur,stockage"
+3,UGAP,Équipement,Véhicules électriques,2000000,2025-10-31,En cours,"véhicule,électrique,mobilité"
+4,RESAH,Médical,Matériel de laboratoire,300000,2025-09-30,En cours,"laboratoire,analyse,recherche"
+5,UNIHA,Mobilier,Mobilier de bureau ergonomique,150000,2025-08-31,Attribué,"mobilier,bureau,ergonomie"

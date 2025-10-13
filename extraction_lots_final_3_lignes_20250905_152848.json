@@ -1,0 +1,49 @@
+{
+  "nombre_lots": 1,
+  "lots_detaille": [
+    {
+      "numero": "1",
+      "intitule": "F TRANSFORMATION NUMERIQUE",
+      "montant_estime": 10000000.0,
+      "montant_maximum": null
+    }
+  ],
+  "montants_estimes": [
+    10000000.0
+  ],
+  "montants_maximum": [],
+  "total_estime": 10000000.0,
+  "total_maximum": 0,
+  "lignes_base_donnees": [
+    {
+      "id_ligne": "LOT_1_INFO",
+      "numero_lot": "1",
+      "intitule_lot": "F TRANSFORMATION NUMERIQUE",
+      "type_donnee": "Informations générales",
+      "valeur": "F TRANSFORMATION NUMERIQUE",
+      "date_extraction": "2025-09-05 15:28:48",
+      "statut": "Extrait",
+      "type": "Lot"
+    },
+    {
+      "id_ligne": "LOT_1_ESTIME",
+      "numero_lot": "1",
+      "intitule_lot": "F TRANSFORMATION NUMERIQUE",
+      "type_donnee": "Montant estimé",
+      "valeur": 10000000.0,
+      "date_extraction": "2025-09-05 15:28:48",
+      "statut": "Extrait",
+      "type": "Montant"
+    },
+    {
+      "id_ligne": "LOT_1_MAXIMUM",
+      "numero_lot": "1",
+      "intitule_lot": "F TRANSFORMATION NUMERIQUE",
+      "type_donnee": "Montant maximum",
+      "valeur": null,
+      "date_extraction": "2025-09-05 15:28:48",
+      "statut": "Extrait",
+      "type": "Montant"
+    }
+  ]
+}
