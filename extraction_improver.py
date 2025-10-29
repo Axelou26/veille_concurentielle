@@ -626,7 +626,8 @@ class ExtractionImprover:
             if any(keyword in text_lower for keyword in keywords):
                 return statut
         
-        return 'En cours'  # Valeur par défaut
+        # Ne PAS retourner de valeur par défaut - laisser None si pas trouvé
+        return None
     
     def _extract_groupement_intelligent(self, text: str, context: Dict[str, Any], existing_data: Dict[str, Any]) -> Optional[str]:
         """Extraction intelligente du groupement"""
@@ -713,21 +714,31 @@ class ExtractionImprover:
             if any(keyword in text_lower for keyword in keywords):
                 return type_proc
         
-        return 'Appel d\'offres ouvert'  # Valeur par défaut
+        # Ne PAS retourner de valeur par défaut - laisser None si pas trouvé
+        return None
     
     def _extract_mono_multi_intelligent(self, text: str, context: Dict[str, Any], existing_data: Dict[str, Any]) -> Optional[str]:
         """Extraction intelligente mono/multi-attributif"""
-        if 'nbr_lots' in existing_data:
-            nbr_lots = int(existing_data['nbr_lots']) if str(existing_data['nbr_lots']).isdigit() else 1
-            return 'Multi-attributif' if nbr_lots > 1 else 'Mono-attributif'
+        # D'abord, vérifier nbr_lots pour inférer (c'est une inférence valide, pas une valeur par défaut)
+        if 'nbr_lots' in existing_data and existing_data['nbr_lots']:
+            try:
+                nbr_lots = int(existing_data['nbr_lots']) if str(existing_data['nbr_lots']).isdigit() else 1
+                if nbr_lots > 1:
+                    return 'Multi-attributif'
+                elif nbr_lots == 1:
+                    return 'Mono-attributif'
+            except:
+                pass
         
+        # Chercher dans le texte
         text_lower = text.lower()
-        if 'multi' in text_lower or 'plusieurs' in text_lower:
+        if 'multi' in text_lower or 'plusieurs' in text_lower or 'alloti' in text_lower or 'lotissement' in text_lower:
             return 'Multi-attributif'
-        elif 'mono' in text_lower or 'unique' in text_lower:
+        elif 'mono' in text_lower or 'unique' in text_lower or 'unitaire' in text_lower:
             return 'Mono-attributif'
         
-        return 'Mono-attributif'  # Valeur par défaut
+        # Ne PAS retourner de valeur par défaut - laisser None si pas trouvé
+        return None
     
     def _extract_execution_marche_intelligent(self, text: str, context: Dict[str, Any], existing_data: Dict[str, Any]) -> Optional[str]:
         """Extraction intelligente de l'exécution du marché"""
@@ -742,7 +753,8 @@ class ExtractionImprover:
             if any(keyword in text_lower for keyword in keywords):
                 return execution
         
-        return 'Services'  # Valeur par défaut
+        # Ne PAS retourner de valeur par défaut - laisser None si pas trouvé
+        return None
     
     def _extract_date_limite_intelligent(self, text: str, context: Dict[str, Any], existing_data: Dict[str, Any]) -> Optional[str]:
         """Extraction intelligente de la date limite"""
@@ -838,7 +850,8 @@ class ExtractionImprover:
             if any(keyword in text_lower for keyword in keywords):
                 return reconduction
         
-        return 'Non'  # Valeur par défaut
+        # Ne PAS retourner de valeur par défaut
+        return None
     
     def _extract_fin_sans_reconduction_intelligent(self, text: str, context: Dict[str, Any], existing_data: Dict[str, Any]) -> Optional[str]:
         """Extraction intelligente de la fin sans reconduction"""
@@ -914,7 +927,8 @@ class ExtractionImprover:
                 except:
                     continue
         
-        return 1  # Valeur par défaut
+        # Ne PAS retourner de valeur par défaut
+        return None
     
     def _extract_intitule_procedure_intelligent(self, text: str, context: Dict[str, Any], existing_data: Dict[str, Any]) -> Optional[str]:
         """Extraction intelligente de l'intitulé de procédure"""
@@ -1013,7 +1027,8 @@ class ExtractionImprover:
                 except:
                     continue
         
-        return 1  # Valeur par défaut
+        # Ne PAS retourner de valeur par défaut
+        return None
     
     def _extract_lots_section(self, text: str) -> Optional[str]:
         """Extraction de la section des lots"""
@@ -1242,7 +1257,8 @@ class ExtractionImprover:
         elif 'fourniture' in title_lower or 'matériel' in title_lower:
             return 'ÉQUIPEMENT'
         
-        return 'SERVICE'  # Valeur par défaut pour les règlements de consultation
+        # Ne PAS retourner de valeur par défaut
+        return None
     
     def _deduce_segment_from_univers(self, univers: str) -> Optional[str]:
         """Déduit le segment basé sur l'univers"""
@@ -1275,7 +1291,8 @@ class ExtractionImprover:
             if any(keyword in title_lower for keyword in keywords):
                 return famille
         
-        return 'Fourniture'  # Valeur par défaut
+        # Ne PAS retourner de valeur par défaut
+        return None
     
     def _deduce_statut_from_dates(self, extracted_data: Dict[str, Any], context: Dict[str, Any]) -> Optional[str]:
         """Déduit le statut basé sur les dates"""
@@ -1293,7 +1310,8 @@ class ExtractionImprover:
             except:
                 pass
         
-        return 'En cours'  # Valeur par défaut
+        # Ne PAS retourner de valeur par défaut - laisser None si pas trouvé
+        return None
     
     def _deduce_type_procedure_from_context(self, context: Dict[str, Any]) -> Optional[str]:
         """Déduit le type de procédure basé sur le contexte"""
@@ -1838,7 +1856,8 @@ class ExtractionImprover:
         elif 'travaux' in title_lower or 'construction' in title_lower:
             return 'TRAVAUX'
         
-        return 'PRESTATIONS INTELLECTUELLES'  # Valeur par défaut pour les règlements de consultation
+        # Ne PAS retourner de valeur par défaut
+        return None
     
     def _validate_with_database(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
         """Valide et corrige les données avec la base de données existante"""
