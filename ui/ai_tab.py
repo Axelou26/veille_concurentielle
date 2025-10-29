@@ -145,7 +145,7 @@ def render_ai_tab(data: pd.DataFrame, ai_engine: VeilleAIEngine):
                         })
                         
                         # Obtenir la réponse de l'IA
-                        answer = ai_engine.query(question)
+                        answer = ai_engine.ask_question(question)
                         
                         # Vérifier si la réponse contient un tableau
                         if "```TABLEAU_STREAMLIT```" in answer:
