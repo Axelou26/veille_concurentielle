@@ -131,39 +131,6 @@ def render_insert_ao_tab(
                         total_elements = total_extracted + total_generated
                         st.metric("📊 Total éléments", total_elements)
                     
-                    # Afficher un aperçu des données extraites
-                    st.markdown("### 📋 Aperçu des données extraites")
-                    
-                    for i, entry in enumerate(extracted_entries):
-                        with st.expander(f"📦 Lot {i+1}: {entry.get('valeurs_extraites', {}).get('intitule_lot', 'N/A')[:50]}...", expanded=(i == 0)):
-                            col1, col2 = st.columns(2)
-                            
-                            with col1:
-                                st.markdown("**📄 Valeurs extraites:**")
-                                valeurs_extraites = entry.get('valeurs_extraites', {})
-                                if valeurs_extraites:
-                                    for key, value in list(valeurs_extraites.items())[:10]:  # Afficher les 10 premiers
-                                        if value:
-                                            st.write(f"- **{key}**: {str(value)[:100]}")
-                                
-                                if len(valeurs_extraites) > 10:
-                                    st.info(f"... et {len(valeurs_extraites) - 10} autres champs")
-                            
-                            with col2:
-                                st.markdown("**🤖 Valeurs générées:**")
-                                valeurs_generees = entry.get('valeurs_generees', {})
-                                if valeurs_generees:
-                                    for key, value in list(valeurs_generees.items())[:10]:  # Afficher les 10 premiers
-                                        if value:
-                                            st.write(f"- **{key}**: {str(value)[:100]}")
-                                
-                                if len(valeurs_generees) > 10:
-                                    st.info(f"... et {len(valeurs_generees) - 10} autres champs")
-                    
-                    # Note: L'interface d'édition complète reste dans app.py pour l'instant
-                    # car elle est très complexe et dépend de beaucoup de session_state
-                    st.info("ℹ️ L'interface d'édition complète des lots est disponible dans la section dédiée ci-dessous.")
-                    
                 else:
                     st.error("❌ Erreur lors de l'extraction")
                     if extracted_entries:
