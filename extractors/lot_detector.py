@@ -63,6 +63,72 @@ class LotDetectionStrategy(ABC):
         """Retourne le nom de la stratégie"""
         pass
     
+    def _is_valid_lot_intitule(self, intitule: str) -> bool:
+        """
+        Valide si un intitulé est un vrai lot
+        
+        Retourne False si l'intitulé :
+        - Commence par un chiffre ou un nombre
+        - Commence par "accord-cadre", "uniquement", "ou", une date ou sans majuscule
+        
+        Args:
+            intitule: Intitulé à valider
+            
+        Returns:
+            True si l'intitulé est valide, False sinon
+        """
+        if not intitule or not isinstance(intitule, str):
+            return False
+        
+        # Supprimer les espaces en début et fin
+        intitule_trim = intitule.strip()
+        if not intitule_trim:
+            return False
+        
+        # Vérifier si l'intitulé commence par un chiffre ou un nombre
+        if re.match(r'^\d', intitule_trim):
+            logger.debug(f"❌ Intitulé rejeté (commence par un chiffre): {intitule_trim[:50]}...")
+            return False
+        
+        # Vérifier si l'intitulé commence par des mots interdits
+        forbidden_starts = [
+            r'^accord-cadre',
+            r'^uniquement',
+            r'^ou\s',  # "ou" suivi d'un espace (pour éviter les mots comme "outil")
+            r'^sans majuscule'
+        ]
+        
+        for pattern in forbidden_starts:
+            if re.match(pattern, intitule_trim, re.IGNORECASE):
+                logger.debug(f"❌ Intitulé rejeté (commence par mot interdit): {intitule_trim[:50]}...")
+                return False
+        
+        # Vérifier si l'intitulé commence par une date (format: jour/mois/année, jour-mois-année, etc.)
+        date_patterns = [
+            r'^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}',  # 01/01/2024, 01-01-24
+            r'^\d{1,2}\s+\d{1,2}\s+\d{2,4}',     # 01 01 2024
+            r'^\d{4}[/-]\d{1,2}[/-]\d{1,2}',     # 2024/01/01
+        ]
+        
+        for pattern in date_patterns:
+            if re.match(pattern, intitule_trim):
+                logger.debug(f"❌ Intitulé rejeté (commence par une date): {intitule_trim[:50]}...")
+                return False
+        
+        # Vérifier si l'intitulé commence par une majuscule
+        # On vérifie le premier caractère alphabétique (en ignorant les espaces)
+        first_alpha_char = None
+        for char in intitule_trim:
+            if char.isalpha():
+                first_alpha_char = char
+                break
+        
+        if first_alpha_char and not first_alpha_char.isupper():
+            logger.debug(f"❌ Intitulé rejeté (ne commence pas par majuscule): {intitule_trim[:50]}...")
+            return False
+        
+        return True
+    
     def _clean_title(self, title: str) -> str:
         """Nettoie un intitulé de lot"""
         if not title or not isinstance(title, str):
@@ -157,6 +223,10 @@ class StructuredTableStrategy(LotDetectionStrategy):
                     # Nettoyer les données
                     numero = int(numero.strip())
                     intitule = self._clean_title(intitule.strip())
+                    
+                    # Valider l'intitulé
+                    if not self._is_valid_lot_intitule(intitule):
+                        continue
                     
                     # Nettoyer les montants
                     montant_estime_clean = montant_estime.replace(' ', '').replace(',', '.')
@@ -329,10 +399,16 @@ class LineAnalysisStrategy(LotDetectionStrategy):
                     
                     # Commencer un nouveau lot
                     numero = int(lot_match.group(1))
-                    intitule = lot_match.group(2).strip()
+                    intitule_raw = lot_match.group(2).strip()
                     
                     # Filtrer les faux lots (codes postaux, etc.) - Limite assouplie à 200 lots
                     if numero > 200 or numero < 1:
+                        current_lot = None
+                        continue
+                    
+                    # Nettoyer et valider l'intitulé
+                    intitule = self._clean_title(intitule_raw)
+                    if not self._is_valid_lot_intitule(intitule):
                         current_lot = None
                         continue
                     
@@ -429,6 +505,10 @@ class LineAnalysisStrategy(LotDetectionStrategy):
                     numero = int(numero_str)
                     intitule = self._clean_title(intitule_raw)
                     
+                    # Valider l'intitulé
+                    if not self._is_valid_lot_intitule(intitule):
+                        continue
+                    
                     lot = LotInfo(
                         numero=numero,
                         intitule=intitule,
@@ -503,6 +583,10 @@ class LineAnalysisStrategy(LotDetectionStrategy):
                     
                     # Vérifier que c'est bien un lot (pas un numéro de page, etc.)
                     if len(intitule) < 3:
+                        continue
+                    
+                    # Valider l'intitulé
+                    if not self._is_valid_lot_intitule(intitule):
                         continue
                     
                     # Filtrer les faux lots (titres de sections, etc.)
@@ -628,6 +712,10 @@ class MultiLineTitlesStrategy(LotDetectionStrategy):
                     
                     numero = int(numero_str)
                     intitule = self._clean_title(intitule_raw)
+                    
+                    # Valider l'intitulé
+                    if not self._is_valid_lot_intitule(intitule):
+                        continue
                     
                     # Chercher les montants dans le contexte du lot
                     lot_context = self._extract_lot_context(text, numero)
@@ -808,6 +896,10 @@ class FlexiblePatternsStrategy(LotDetectionStrategy):
                         numero = int(numero_str)
                         intitule = self._clean_title(match[1].strip() if len(match) > 1 else f"Lot {numero}")
                         
+                        # Valider l'intitulé
+                        if not self._is_valid_lot_intitule(intitule):
+                            continue
+                        
                         # Gérer les montants selon le nombre de groupes capturés
                         montant_estime = 0.0
                         montant_maximum = 0.0
@@ -906,6 +998,10 @@ class ExcelTableStrategy(LotDetectionStrategy):
                             
                             numero = int(numero_str)
                             intitule = self._clean_title(match[1].strip())
+                            
+                            # Valider l'intitulé
+                            if not self._is_valid_lot_intitule(intitule):
+                                continue
                             
                             # Gérer les montants
                             montant_estime = 0.0
