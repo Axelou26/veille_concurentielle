@@ -13,6 +13,50 @@ from database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
+# Code d'autorisation pour accéder à l'onglet Insertion AO
+INSERTION_AO_CODE = "kristelle123"
+
+def verify_insertion_ao_access() -> bool:
+    """
+    Vérifie si l'utilisateur a entré le bon code pour accéder à l'onglet Insertion AO
+    
+    Returns:
+        bool: True si le code est correct, False sinon
+    """
+    if 'insertion_ao_authorized' not in st.session_state:
+        st.session_state.insertion_ao_authorized = False
+    
+    if st.session_state.insertion_ao_authorized:
+        return True
+    
+    # Afficher un champ pour entrer le code
+    st.warning("🔒 L'accès à l'onglet Insertion AO nécessite une autorisation")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        entered_code = st.text_input(
+            "Entrez le code d'accès:",
+            type="password",
+            key="insertion_ao_code_input"
+        )
+    with col2:
+        st.write("")  # Espacement vertical
+        st.write("")  # Espacement vertical
+        verify_button = st.button("✅ Valider", key="verify_insertion_ao_button")
+    
+    if verify_button and entered_code:
+        if entered_code == INSERTION_AO_CODE:
+            st.session_state.insertion_ao_authorized = True
+            st.success("✅ Code valide - Accès autorisé")
+            st.rerun()
+        else:
+            st.error("❌ Code incorrect - Accès refusé")
+            return False
+    elif verify_button and not entered_code:
+        st.error("⚠️ Veuillez entrer un code")
+    
+    return False
+
 
 def render_insert_ao_tab(
     data: pd.DataFrame,
@@ -29,6 +73,10 @@ def render_insert_ao_tab(
         criteria_extractor (UniversalCriteriaExtractor): Extracteur de critères
         db_manager (DatabaseManager): Gestionnaire de base de données
     """
+    # Vérifier l'accès avec le code
+    if not verify_insertion_ao_access():
+        return  # Arrêter le rendu si le code n'est pas valide
+    
     st.header("📥 Insertion d'Appels d'Offres")
     st.info("🚀 **Système d'extraction intelligent** - L'IA apprend depuis vos données et extrait BEAUCOUP PLUS d'éléments !")
     

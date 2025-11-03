@@ -97,6 +97,9 @@ class BaseExtractor(ABC):
                         
                         if value and str(value).strip():
                             extracted_values.append(str(value).strip())
+                            # Pour les dates et durées, prendre seulement la première valeur valide
+                            if field_name and field_name in ['date_limite', 'date_attribution', 'duree_marche', 'fin_sans_reconduction', 'fin_avec_reconduction']:
+                                break  # Prendre seulement la première date trouvée
                             
             except Exception as e:
                 logger.warning(f"Erreur pattern '{pattern}' pour {field_name}: {e}")
@@ -178,21 +181,17 @@ class BaseExtractor(ABC):
         if not value or not isinstance(value, str):
             return value
         
-        cleaned = value.strip()
+        # Normaliser les erreurs OCR courantes avant le traitement spécifique
+        cleaned = self._normalize_ocr_errors(value.strip())
         
         if field_type == 'montant':
-            # Nettoyer les montants
-            cleaned = re.sub(r'[^\d,.\s€]', '', cleaned)
-            cleaned = cleaned.replace('€', '').replace('euros', '').replace('euro', '')
-            cleaned = cleaned.replace(' ', '').replace(',', '.')
-            try:
-                return float(cleaned) if cleaned else 0
-            except ValueError:
-                return 0
+            # Nettoyer les montants avec support k€, M€
+            cleaned = self._normalize_montant(cleaned)
+            return cleaned
                 
         elif field_type == 'date':
-            # Nettoyer les dates
-            cleaned = re.sub(r'[^\d/\-]', '', cleaned)
+            # Nettoyer et normaliser les dates
+            cleaned = self._normalize_date(cleaned)
             return cleaned
             
         elif field_type == 'reference':
@@ -201,7 +200,31 @@ class BaseExtractor(ABC):
             return cleaned.upper()
         
         elif field_type == 'duree':
-            # Extraire un entier représentant la durée (mois si non précisé)
+            # Extraire et convertir la durée en mois
+            # Détecter si c'est en années ou mois
+            mois_match = re.search(r'(\d{1,3})\s*(?:mois|mois\.|m\.)', cleaned, re.IGNORECASE)
+            ans_match = re.search(r'(\d{1,2})\s*(?:ans|an|année|annee|années|annees)', cleaned, re.IGNORECASE)
+            
+            if mois_match:
+                # Déjà en mois
+                try:
+                    return int(mois_match.group(1))
+                except ValueError:
+                    pass
+            elif ans_match:
+                # En années, convertir en mois (1 an = 12 mois)
+                try:
+                    ans = int(ans_match.group(1))
+                    # Chercher aussi des mois additionnels (ex: "2 ans et 3 mois")
+                    mois_add = re.search(r'(\d{1,2})\s*(?:mois|mois\.|m\.)', cleaned, re.IGNORECASE)
+                    mois_total = ans * 12
+                    if mois_add:
+                        mois_total += int(mois_add.group(1))
+                    return mois_total
+                except ValueError:
+                    pass
+            
+            # Si pas de format reconnu, extraire juste le nombre (supposé en mois)
             m = re.search(r'(\d{1,3})', cleaned)
             if m:
                 try:
@@ -209,10 +232,182 @@ class BaseExtractor(ABC):
                 except ValueError:
                     return cleaned
             return cleaned
+        
+        elif field_type == 'reconduction':
+            # Normaliser la reconduction : Oui, Non, ou Non spécifié
+            cleaned_lower = cleaned.lower().strip()
+            
+            # Détecter "oui" ou variantes positives
+            if re.search(r'\b(oui|possible|autorisée|autorisé|prévue|prevue|autorisée)\b', cleaned_lower):
+                return 'Oui'
+            
+            # Détecter "non" ou variantes négatives
+            if re.search(r'\b(non|impossible|non\s+autorisée|non\s+autorisé|non\s+prévue|non\s+prevue|sans\s+reconduction|sans\s+renouvellement)\b', cleaned_lower):
+                return 'Non'
+            
+            # Si aucun pattern n'a matché mais qu'il y a du texte, retourner "Non spécifié"
+            if cleaned and len(cleaned.strip()) > 0:
+                # Si le pattern a détecté quelque chose (mention de reconduction), mais pas clairement oui/non
+                if re.search(r'\b(reconduction|reconductible|renouvellement)\b', cleaned_lower):
+                    return 'Non spécifié'
+            
+            # Sinon, valeur vide
+            return cleaned
             
         else:
             # Nettoyage général
             cleaned = re.sub(r'\s+', ' ', cleaned)  # Espaces multiples
+            return cleaned
+    
+    def _normalize_ocr_errors(self, text: str) -> str:
+        """
+        Corrige les erreurs OCR courantes de manière CONSERVATRICE
+        pour ne pas casser la détection des lots
+        
+        Args:
+            text: Texte à normaliser
+            
+        Returns:
+            Texte corrigé
+        """
+        if not text:
+            return text
+        
+        # Dictionnaire des remplacements OCR courants (version conservatrice)
+        # REMARQUE: Éviter les règles qui peuvent casser la détection des lots
+        ocr_replacements = [
+            # Erreurs de reconnaissance de caractères (seulement cas sûrs)
+            # NOTE: Pas de remplacement 'l'→'I' ni '0'→'O' car cela casse "lot" et numéros de lots
+            
+            # Espaces et ponctuation mal placés (conservateur)
+            (r'\s+,', ','),  # Espace avant virgule
+            (r'\s+\.', '.'),  # Espace avant point (seulement si suivi d'un espace)
+            (r'\s+:', ':'),  # Espace avant deux-points
+            # NOTE: Pas de remplacement automatique virgule/point sans espace car peut casser des formats
+            
+            # Corrections spécifiques aux appels d'offres (conservateur)
+            (r'\bd\'offre\b', "d'offre"),  # Correction apostrophe
+            # NOTE: Pas de corrections d'accents automatiques car peuvent casser des patterns
+            
+            # Correction des espaces multiples (conservateur)
+            # NOTE: Pas de suppression des espaces dans les nombres (ex: "10 000") 
+            # car cela peut casser des patterns de lots comme "Lot 1 234"
+        ]
+        
+        normalized = text
+        for pattern, replacement in ocr_replacements:
+            normalized = re.sub(pattern, replacement, normalized, flags=re.IGNORECASE)
+        
+        # Normalisation finale : seulement les espaces multiples EXTREMES (très conservateur)
+        # Ne normaliser que les espaces multiples de 3+ espaces consécutifs
+        # pour éviter de casser les formats avec double espaces légitimes
+        normalized = re.sub(r'\s{3,}', ' ', normalized)  # Seulement 3+ espaces consécutifs
+        
+        return normalized
+    
+    def _normalize_montant(self, value: str) -> float:
+        """
+        Normalise un montant avec support des unités (k€, M€)
+        
+        Args:
+            value: Valeur du montant à normaliser
+            
+        Returns:
+            Montant normalisé en euros (float)
+        """
+        try:
+            # Convertir en string si nécessaire
+            cleaned = str(value).strip()
+            
+            # Détecter et extraire le multiplicateur
+            multiplier = 1
+            if re.search(r'\bk€?\b|\bkeuros?\b|\bk\s*€', cleaned, re.IGNORECASE):
+                multiplier = 1000
+                # Retirer les indicateurs de milliers
+                cleaned = re.sub(r'\bk€?\b|\bkeuros?\b|\bk\s*€', '', cleaned, flags=re.IGNORECASE)
+            elif re.search(r'\bm€?\b|\bmillions?\b|\bm\s*€', cleaned, re.IGNORECASE):
+                multiplier = 1000000
+                # Retirer les indicateurs de millions
+                cleaned = re.sub(r'\bm€?\b|\bmillions?\b|\bm\s*€', '', cleaned, flags=re.IGNORECASE)
+            
+            # Supprimer les caractères non numériques sauf point, virgule et espace
+            cleaned = re.sub(r'[^\d,.\s]', '', cleaned)
+            
+            # Retirer le symbole euro et ses variantes
+            cleaned = cleaned.replace('€', '').replace('euros', '').replace('euro', '').replace('EUR', '')
+            
+            # Normaliser le séparateur décimal
+            # Si on a une virgule comme séparateur (format français)
+            if ',' in cleaned and '.' not in cleaned.replace(',', '', 1):
+                # Probablement format français: "1 234,56"
+                cleaned = cleaned.replace(' ', '').replace(',', '.')
+            elif ',' in cleaned and '.' in cleaned:
+                # Les deux présents : le dernier est le séparateur décimal
+                if cleaned.rindex(',') > cleaned.rindex('.'):
+                    # Virgule après point = séparateur décimal français
+                    cleaned = cleaned.replace('.', '').replace(',', '.')
+                else:
+                    # Point après virgule = format anglais
+                    cleaned = cleaned.replace(',', '')
+            else:
+                # Pas de virgule, ou virgule comme séparateur de milliers
+                cleaned = cleaned.replace(' ', '')
+            
+            # Convertir en float
+            if cleaned:
+                amount = float(cleaned) * multiplier
+                return round(amount, 2)
+            else:
+                return 0.0
+                
+        except (ValueError, AttributeError) as e:
+            logger.debug(f"Erreur normalisation montant '{value}': {e}")
+            return 0.0
+    
+    def _normalize_date(self, date_str: str) -> str:
+        """
+        Normalise une date en format standard DD/MM/YYYY
+        
+        Args:
+            date_str: Date à normaliser
+            
+        Returns:
+            Date normalisée au format DD/MM/YYYY
+        """
+        if not date_str:
+            return date_str
+        
+        try:
+            from dateutil import parser as date_parser
+            
+            # Essayer de parser avec dateutil (gère beaucoup de formats)
+            parsed_date = date_parser.parse(date_str, fuzzy=True, dayfirst=True)
+            
+            # Valider que la date est dans une plage raisonnable
+            if parsed_date.year >= 2000 and parsed_date.year <= 2100:
+                return parsed_date.strftime('%d/%m/%Y')
+            else:
+                # Année invalide, retourner la date nettoyée
+                cleaned = re.sub(r'[^\d/\-]', '', date_str)
+                return cleaned
+                
+        except (ValueError, TypeError, ImportError):
+            # Si dateutil n'est pas disponible ou parsing échoue, nettoyer manuellement
+            # Supprimer les caractères non numériques sauf / et -
+            cleaned = re.sub(r'[^\d/\-]', '', date_str)
+            
+            # Normaliser les séparateurs
+            cleaned = cleaned.replace('-', '/')
+            
+            # Vérifier le format basique
+            if re.match(r'\d{1,2}/\d{1,2}/\d{2,4}', cleaned):
+                return cleaned
+            elif re.match(r'\d{4}-\d{2}-\d{2}', date_str):
+                # Format ISO, convertir en DD/MM/YYYY
+                parts = date_str.split('-')
+                if len(parts) == 3:
+                    return f"{parts[2]}/{parts[1]}/{parts[0]}"
+            
             return cleaned
     
     def generate_missing_values(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -555,48 +750,169 @@ class BaseExtractor(ABC):
                     logger.debug(f"💡 Segment suggéré depuis BDD: {suggestion}")
                     return suggestion
             
-            # 2. Inférence basée sur l'univers (si disponible)
+            # Récupérer toutes les sources de texte pour une analyse complète
+            sources = [
+                data.get('intitule_procedure', ''),
+                data.get('intitule_lot', ''),
+                data.get('infos_complementaires', ''),
+                data.get('execution_marche', ''),
+                data.get('mots_cles', '')
+            ]
+            text_combined = ' '.join(str(s) for s in sources if s).lower()
+            
+            # Normalisation sans accents
+            def normalize(text: str) -> str:
+                normalized = unicodedata.normalize('NFD', text)
+                normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+                return normalized
+            
+            text_norm = normalize(text_combined) if text_combined else ''
+            
+            # 2. Inférence basée sur l'univers avec scoring intelligent
             univers = data.get('univers', '')
+            segment_scores = {}
+            
             if univers:
-                segment_mapping = {
-                    'Médical': ['Hospitalier', 'Santé publique', 'Santé privée', 'EHPAD'],
-                    'Informatique': ['Logiciels', 'Infrastructure', 'Sécurité informatique', 'Télécommunications'],
-                    'Equipement': ['Equipements techniques', 'Matériels', 'Dispositifs médicaux'],
-                    'Consommable': ['Consommables médicaux', 'Fournitures', 'Réactifs'],
-                    'Mobilier': ['Mobilier hospitalier', 'Mobilier de bureau', 'Ameublement'],
-                    'Vehicules': ['Véhicules de service', 'Véhicules médicaux', 'Transport'],
-                    'Service': ['Services', 'Prestations', 'Maintenance', 'Formation']
+                # Mapping segment -> mots-clés avec poids
+                segment_keywords = {
+                    'Médical': {
+                        'Hospitalier': {
+                            'words': ['hospitalier', 'hopital', 'chru', 'chu', 'ch', 'centre hospitalier', 
+                                     'etablissement hospitalier', 'gh', 'ghp', 'ghps', 'clinique', 
+                                     'centre de soins', 'bloc operatoire'],
+                            'weight': 1.0
+                        },
+                        'Santé publique': {
+                            'words': ['sante publique', 'santé publique', 'ars', 'collectivite', 
+                                     'commune', 'mairie', 'departement', 'region', 'cnrs', 
+                                     'etablissement public', 'service public'],
+                            'weight': 1.0
+                        },
+                        'Santé privée': {
+                            'words': ['prive', 'privé', 'sante privee', 'santé privée', 'cabinet', 
+                                     'praticien', 'medecin prive'],
+                            'weight': 1.0
+                        },
+                        'EHPAD': {
+                            'words': ['ehpad', 'maison retraite', 'residence', 'personnes agees', 
+                                     'personnes âgées', 'geriatrie', 'gériatrie'],
+                            'weight': 1.0
+                        }
+                    },
+                    'Informatique': {
+                        'Logiciels': {
+                            'words': ['logiciel', 'application', 'software', 'app', 'programme', 
+                                     'erp', 'pgi', 'si', 'systeme information', 'licence'],
+                            'weight': 1.0
+                        },
+                        'Infrastructure': {
+                            'words': ['infrastructure', 'serveur', 'reseau', 'réseau', 'cloud', 
+                                     'virtualisation', 'saas', 'iaas', 'paas', 'datacenter'],
+                            'weight': 1.0
+                        },
+                        'Sécurité informatique': {
+                            'words': ['securite', 'sécurité', 'cybersecurite', 'cybersécurité', 
+                                     'firewall', 'antivirus', 'protection', 'securisation'],
+                            'weight': 1.0
+                        },
+                        'Télécommunications': {
+                            'words': ['telecommunication', 'télécommunication', 'telephonie', 
+                                     'téléphonie', 'voip', 'fibre', 'reseaux telecom'],
+                            'weight': 1.0
+                        }
+                    },
+                    'Equipement': {
+                        'Equipements techniques': {
+                            'words': ['equipement technique', 'materiel technique', 'appareil technique', 
+                                     'outillage', 'machine', 'installation'],
+                            'weight': 1.0
+                        },
+                        'Matériels': {
+                            'words': ['materiel', 'matériel', 'equipement', 'équipement', 'appareil'],
+                            'weight': 0.8
+                        },
+                        'Dispositifs médicaux': {
+                            'words': ['dispositif medical', 'dispositif médical', 'biomedical', 
+                                     'biomédical', 'appareil medical'],
+                            'weight': 1.0
+                        }
+                    },
+                    'Service': {
+                        'Services': {
+                            'words': ['service', 'prestation', 'prestations', 'prestation de service'],
+                            'weight': 0.5
+                        },
+                        'Prestations': {
+                            'words': ['prestation', 'prestations', 'conseil', 'assistance', 'support'],
+                            'weight': 1.0
+                        },
+                        'Maintenance': {
+                            'words': ['maintenance', 'entretien', 'sav', 'reparation', 'réparation', 
+                                     'intervention', 'depannage', 'dépannage'],
+                            'weight': 1.0
+                        },
+                        'Formation': {
+                            'words': ['formation', 'apprentissage', 'enseignement', 'pedagogie', 
+                                     'pédagogie', 'cours', 'stage'],
+                            'weight': 1.0
+                        }
+                    }
                 }
-                if univers in segment_mapping:
-                    # Prendre le premier segment possible (ou pourrait être amélioré avec scoring)
-                    return segment_mapping[univers][0]
-            
-            # 3. Inférence basée sur l'intitulé
-            intitule = data.get('intitule_procedure', '') or data.get('intitule_lot', '')
-            if intitule:
-                intitule_lower = str(intitule).lower()
                 
-                # Détection par mots-clés dans l'intitulé
-                if any(word in intitule_lower for word in ['hospitalier', 'hopital', 'clinique', 'etablissement']):
-                    return 'Hospitalier'
-                elif any(word in intitule_lower for word in ['sante publique', 'santé publique', 'collectivite']):
-                    return 'Santé publique'
-                elif any(word in intitule_lower for word in ['logiciel', 'application', 'si', 'informatique']):
-                    return 'Logiciels'
-                elif any(word in intitule_lower for word in ['maintenance', 'entretien', 'support']):
-                    return 'Services'
-                elif any(word in intitule_lower for word in ['equipement', 'materiel', 'appareil']):
-                    return 'Equipements techniques'
+                # Calculer les scores pour chaque segment possible
+                if univers in segment_keywords:
+                    for segment, config in segment_keywords[univers].items():
+                        score = 0
+                        words = config['words']
+                        weight = config.get('weight', 1.0)
+                        
+                        for word in words:
+                            if word in text_norm:
+                                # Compter les occurrences et appliquer le poids
+                                occurrences = text_norm.count(word)
+                                score += occurrences * weight
+                        
+                        if score > 0:
+                            segment_scores[segment] = score
+                            logger.debug(f"  📊 Segment '{segment}': score={score:.2f}")
             
-            # 4. Inférence basée sur le groupement
+            # 3. Inférence basée sur le groupement (bonus)
             groupement = data.get('groupement', '')
             if groupement:
-                # Certains groupements peuvent suggérer des segments
-                if groupement == 'RESAH':
-                    return 'Hospitalier'
-                elif groupement in ['UGAP', 'UNIHA', 'CAIH']:
-                    # Ces groupements peuvent avoir plusieurs segments, on prend une valeur par défaut
-                    return 'Hospitalier'
+                groupement_segments = {
+                    'RESAH': 'Hospitalier',
+                    'UGAP': None,  # Peut être varié selon contenu
+                    'UNIHA': 'Hospitalier',
+                    'CAIH': 'Hospitalier'
+                }
+                if groupement in groupement_segments and groupement_segments[groupement]:
+                    groupement_segment = groupement_segments[groupement]
+                    # Ajouter un bonus au segment correspondant
+                    if groupement_segment in segment_scores:
+                        segment_scores[groupement_segment] += 2.0
+                    else:
+                        segment_scores[groupement_segment] = 2.0
+            
+            # Retourner le segment avec le score le plus élevé
+            if segment_scores:
+                best_segment = max(segment_scores.items(), key=lambda x: x[1])[0]
+                logger.debug(f"✅ Segment sélectionné: {best_segment} (score: {segment_scores[best_segment]:.2f})")
+                return best_segment
+            
+            # 4. Fallback : si aucun segment trouvé, utiliser le premier selon l'univers
+            if univers:
+                fallback_mapping = {
+                    'Médical': 'Hospitalier',
+                    'Informatique': 'Logiciels',
+                    'Equipement': 'Equipements techniques',
+                    'Consommable': 'Consommables médicaux',
+                    'Mobilier': 'Mobilier hospitalier',
+                    'Vehicules': 'Véhicules de service',
+                    'Service': 'Services'
+                }
+                if univers in fallback_mapping:
+                    logger.debug(f"⚠️ Segment fallback pour {univers}: {fallback_mapping[univers]}")
+                    return fallback_mapping[univers]
             
             return None
             
@@ -622,78 +938,188 @@ class BaseExtractor(ABC):
                     logger.debug(f"💡 Famille suggérée depuis BDD: {suggestion}")
                     return suggestion
             
-            # 2. Inférence basée sur l'univers et l'intitulé
+            # Récupérer toutes les sources de texte pour une analyse complète
+            sources = [
+                data.get('intitule_procedure', ''),
+                data.get('intitule_lot', ''),
+                data.get('infos_complementaires', ''),
+                data.get('execution_marche', ''),
+                data.get('mots_cles', '')
+            ]
+            text_combined = ' '.join(str(s) for s in sources if s).lower()
+            
+            # Normalisation sans accents
+            def normalize(text: str) -> str:
+                normalized = unicodedata.normalize('NFD', text)
+                normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+                return normalized
+            
+            text_norm = normalize(text_combined) if text_combined else ''
+            
+            # 2. Inférence basée sur l'univers avec scoring intelligent
             univers = data.get('univers', '')
-            intitule = data.get('intitule_procedure', '') or data.get('intitule_lot', '')
-            intitule_lower = str(intitule).lower()
+            famille_scores = {}
             
-            if univers == 'Médical':
-                if any(word in intitule_lower for word in ['sterilisation', 'stérilisation', 'desinfection']):
-                    return 'Stérilisation'
-                elif any(word in intitule_lower for word in ['consommable', 'jetable', 'reactif']):
-                    return 'Consommables médicaux'
-                elif any(word in intitule_lower for word in ['imagerie', 'radiologie', 'scanner']):
-                    return 'Imagerie médicale'
-                elif any(word in intitule_lower for word in ['laboratoire', 'analyse', 'diagnostic']):
-                    return 'Biologie médicale'
-                else:
-                    return 'Matériel médical'
+            if univers:
+                # Mapping famille -> mots-clés avec poids
+                famille_keywords = {
+                    'Médical': {
+                        'Stérilisation': {
+                            'words': ['sterilisation', 'stérilisation', 'desinfection', 'autoclave', 
+                                     'sterilisation centralisee', 'stérilisation centralisée', 'scs', 
+                                     'laveur desinfecteur', 'laveur désinfecteur'],
+                            'weight': 1.0
+                        },
+                        'Consommables médicaux': {
+                            'words': ['consommable', 'jetable', 'reactif', 'réactif', 'bandelette', 
+                                     'seringue', 'gant', 'masque', 'cathéter', 'sonde', 'compresse', 
+                                     'gaze', 'champ operatoire', 'champ opératoire'],
+                            'weight': 1.0
+                        },
+                        'Imagerie médicale': {
+                            'words': ['imagerie', 'radiologie', 'scanner', 'irm', 'echographie', 
+                                     'échographie', 'mammographie', 'tomodensitometrie', 
+                                     'tomodensitométrie', 'imagerie medicale', 'imagerie médicale'],
+                            'weight': 1.0
+                        },
+                        'Biologie médicale': {
+                            'words': ['laboratoire', 'analyse', 'diagnostic', 'biologie', 'hematologie', 
+                                     'hématologie', 'microbiologie', 'biochimie', 'serologie', 
+                                     'sérologie', 'biologie medicale'],
+                            'weight': 1.0
+                        },
+                        'Matériel médical': {
+                            'words': ['materiel medical', 'matériel médical', 'equipement medical', 
+                                     'équipement médical', 'appareil medical', 'dispositif medical'],
+                            'weight': 0.8
+                        },
+                        'Bloc opératoire': {
+                            'words': ['bloc operatoire', 'bloc opératoire', 'salle operation', 
+                                     'salle opération', 'anesthesie', 'anesthésie', 'moniteur', 
+                                     'table operation'],
+                            'weight': 1.0
+                        },
+                        'Réanimation': {
+                            'words': ['reanimation', 'réanimation', 'soins intensifs', 'si', 'rea', 
+                                     'ventilateur', 'respirateur'],
+                            'weight': 1.0
+                        }
+                    },
+                    'Informatique': {
+                        'Logiciels ERP/PGI': {
+                            'words': ['erp', 'pgi', 'logiciel gestion', 'logiciel erp', 'progiciel', 
+                                     'systeme gestion', 'système gestion', 'erp medical', 'erp hopital'],
+                            'weight': 1.0
+                        },
+                        'Logiciels': {
+                            'words': ['logiciel', 'software', 'application', 'app', 'licence', 
+                                     'programme', 'outil informatique'],
+                            'weight': 0.8
+                        },
+                        'Solutions Cloud': {
+                            'words': ['cloud', 'saas', 'iaas', 'paas', 'azure', 'aws', 'gcp', 
+                                     'hebergement cloud', 'hébergement cloud', 'infrastructure cloud'],
+                            'weight': 1.0
+                        },
+                        'Cybersécurité': {
+                            'words': ['securite', 'sécurité', 'cybersecurite', 'cybersécurité', 
+                                     'firewall', 'antivirus', 'protection', 'securisation', 
+                                     'intrusion detection', 'intrusion détection'],
+                            'weight': 1.0
+                        },
+                        'Téléphonie': {
+                            'words': ['telephonie', 'téléphonie', 'voip', 'pabx', 'ipbx', 
+                                     'telecommunication', 'télécommunication'],
+                            'weight': 1.0
+                        },
+                        'Infrastructure réseau': {
+                            'words': ['reseau', 'réseau', 'switch', 'routeur', 'wifi', 'wlan', 
+                                     'ethernet', 'infrastructure reseau'],
+                            'weight': 1.0
+                        }
+                    },
+                    'Equipement': {
+                        'Équipements médicaux': {
+                            'words': ['medical', 'médical', 'biomedical', 'biomédical', 
+                                     'appareil medical', 'dispositif medical', 'equipement medical'],
+                            'weight': 1.0
+                        },
+                        'Équipements techniques': {
+                            'words': ['technique', 'industriel', 'outillage', 'machine', 'equipement technique', 
+                                     'materiel technique', 'installation technique'],
+                            'weight': 1.0
+                        },
+                        'Matériel et équipements': {
+                            'words': ['materiel', 'matériel', 'equipement', 'équipement', 'appareil'],
+                            'weight': 0.5
+                        }
+                    },
+                    'Service': {
+                        'Maintenance': {
+                            'words': ['maintenance', 'entretien', 'sav', 'reparation', 'réparation', 
+                                     'intervention', 'depannage', 'dépannage', 'maintenance preventive', 
+                                     'maintenance préventive'],
+                            'weight': 1.0
+                        },
+                        'Formation': {
+                            'words': ['formation', 'apprentissage', 'enseignement', 'pedagogie', 
+                                     'pédagogie', 'cours', 'stage', 'training', 'formation continue'],
+                            'weight': 1.0
+                        },
+                        'Services de nettoyage': {
+                            'words': ['nettoyage', 'hygiene', 'hygiène', 'proprete', 'propreté', 
+                                     'nettoyage hospitalier', 'nettoyage industriel', 'prestations nettoyage'],
+                            'weight': 1.0
+                        },
+                        'Conseil': {
+                            'words': ['conseil', 'consulting', 'assistance technique', 'accompagnement', 
+                                     'expertise', 'audit', 'conseil strategique'],
+                            'weight': 1.0
+                        },
+                        'Services': {
+                            'words': ['service', 'prestation', 'prestations'],
+                            'weight': 0.3
+                        }
+                    }
+                }
+                
+                # Calculer les scores pour chaque famille possible
+                if univers in famille_keywords:
+                    for famille, config in famille_keywords[univers].items():
+                        score = 0
+                        words = config['words']
+                        weight = config.get('weight', 1.0)
+                        
+                        for word in words:
+                            if word in text_norm:
+                                # Compter les occurrences et appliquer le poids
+                                occurrences = text_norm.count(word)
+                                score += occurrences * weight
+                        
+                        if score > 0:
+                            famille_scores[famille] = score
+                            logger.debug(f"  📊 Famille '{famille}': score={score:.2f}")
             
-            elif univers == 'Informatique':
-                if any(word in intitule_lower for word in ['erp', 'pgi', 'logiciel gestion', 'logiciel erp']):
-                    return 'Logiciels ERP/PGI'
-                elif any(word in intitule_lower for word in ['licence', 'software', 'application']):
-                    return 'Logiciels'
-                elif any(word in intitule_lower for word in ['cloud', 'saas', 'infrastructure']):
-                    return 'Solutions Cloud'
-                elif any(word in intitule_lower for word in ['securite', 'sécurité', 'cybersecurite']):
-                    return 'Cybersécurité'
-                else:
-                    return 'Logiciels et applications'
+            # Retourner la famille avec le score le plus élevé
+            if famille_scores:
+                best_famille = max(famille_scores.items(), key=lambda x: x[1])[0]
+                logger.debug(f"✅ Famille sélectionnée: {best_famille} (score: {famille_scores[best_famille]:.2f})")
+                return best_famille
             
-            elif univers == 'Equipement':
-                if any(word in intitule_lower for word in ['medical', 'médical', 'biomedical']):
-                    return 'Équipements médicaux'
-                elif any(word in intitule_lower for word in ['technique', 'industriel', 'outillage']):
-                    return 'Équipements techniques'
-                else:
-                    return 'Matériel et équipements'
-            
-            elif univers == 'Consommable':
-                if any(word in intitule_lower for word in ['medical', 'médical', 'hopital']):
-                    return 'Consommables médicaux'
-                elif any(word in intitule_lower for word in ['bureau', 'papier', 'toner', 'encre']):
-                    return 'Fournitures de bureau'
-                else:
-                    return 'Consommables'
-            
-            elif univers == 'Mobilier':
-                if any(word in intitule_lower for word in ['medical', 'médical', 'hopital', 'clinique']):
-                    return 'Mobilier médical'
-                else:
-                    return 'Mobilier'
-            
-            elif univers == 'Vehicules':
-                return 'Véhicules'
-            
-            elif univers == 'Service':
-                if any(word in intitule_lower for word in ['maintenance', 'entretien', 'sav']):
-                    return 'Maintenance'
-                elif any(word in intitule_lower for word in ['formation', 'apprentissage']):
-                    return 'Formation'
-                elif any(word in intitule_lower for word in ['nettoyage', 'hygiene', 'propreté']):
-                    return 'Services de nettoyage'
-                else:
-                    return 'Services'
-            
-            # 3. Inférence basée uniquement sur l'intitulé (si pas d'univers)
-            if intitule and not univers:
-                if any(word in intitule_lower for word in ['formation', 'apprentissage']):
-                    return 'Formation'
-                elif any(word in intitule_lower for word in ['maintenance', 'entretien']):
-                    return 'Maintenance'
-                elif any(word in intitule_lower for word in ['logiciel', 'application', 'erp']):
-                    return 'Logiciels'
+            # 3. Fallback : utiliser les valeurs par défaut uniquement si vraiment nécessaire
+            if univers:
+                fallback_mapping = {
+                    'Médical': 'Matériel médical',
+                    'Informatique': 'Logiciels',
+                    'Equipement': 'Équipements techniques',
+                    'Consommable': 'Consommables médicaux',
+                    'Mobilier': 'Mobilier',
+                    'Vehicules': 'Véhicules',
+                    'Service': 'Services'
+                }
+                if univers in fallback_mapping:
+                    logger.debug(f"⚠️ Famille fallback pour {univers}: {fallback_mapping[univers]}")
+                    return fallback_mapping[univers]
             
             return None
             

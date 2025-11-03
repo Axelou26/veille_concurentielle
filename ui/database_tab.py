@@ -8,6 +8,169 @@ import pandas as pd
 from datetime import datetime
 from database_manager import DatabaseManager
 from ao_extractor_v2 import AOExtractorV2
+import io
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.table import Table, TableStyleInfo
+
+# Code d'autorisation pour les actions de maintenance
+MAINTENANCE_CODE = "kristelle123"  # Code à changer selon vos besoins
+
+def verify_maintenance_code(action_name: str = "cette action") -> bool:
+    """
+    Vérifie si l'utilisateur a entré le bon code de maintenance
+    
+    Args:
+        action_name: Nom de l'action pour personnaliser le message
+    
+    Returns:
+        bool: True si le code est correct, False sinon
+    """
+    if 'maintenance_authorized' not in st.session_state:
+        st.session_state.maintenance_authorized = False
+    
+    if st.session_state.maintenance_authorized:
+        return True
+    
+    # Afficher un champ pour entrer le code
+    st.warning(f"🔒 {action_name.capitalize()} nécessite une autorisation")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        entered_code = st.text_input(
+            "Entrez le code de maintenance:",
+            type="password",
+            key=f"maintenance_code_{action_name.replace(' ', '_')}"
+        )
+    with col2:
+        st.write("")  # Espacement vertical
+        st.write("")  # Espacement vertical
+        verify_button = st.button("✅ Valider", key=f"verify_button_{action_name.replace(' ', '_')}")
+    
+    if verify_button and entered_code:
+        if entered_code == MAINTENANCE_CODE:
+            st.session_state.maintenance_authorized = True
+            st.success("✅ Code valide - Accès autorisé")
+            st.rerun()
+        else:
+            st.error("❌ Code incorrect - Accès refusé")
+            return False
+    elif verify_button and not entered_code:
+        st.error("⚠️ Veuillez entrer un code")
+    
+    return False
+
+
+def create_formatted_excel(df: pd.DataFrame) -> io.BytesIO:
+    """
+    Crée un fichier Excel formaté avec tableau Excel depuis un DataFrame
+    
+    Args:
+        df: DataFrame pandas à exporter
+        
+    Returns:
+        BytesIO: Buffer contenant le fichier Excel
+    """
+    # Créer un workbook et une worksheet
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Données Veille"
+    
+    # Styles pour l'en-tête
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    
+    # Style pour les bordures
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    # Écrire les en-têtes
+    for col_num, column_title in enumerate(df.columns, 1):
+        cell = ws.cell(row=1, column=col_num)
+        cell.value = column_title
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+    
+    # Écrire les données
+    for row_num, row_data in enumerate(df.itertuples(index=False), 2):
+        for col_num, value in enumerate(row_data, 1):
+            cell = ws.cell(row=row_num, column=col_num)
+            
+            # Gérer les valeurs NaN
+            if pd.isna(value):
+                cell.value = None
+            else:
+                cell.value = value
+            
+            # Formatage conditionnel selon le type
+            if isinstance(value, (int, float)) and not pd.isna(value):
+                # Format numérique
+                cell.number_format = '#,##0' if isinstance(value, int) else '#,##0.00'
+            elif pd.api.types.is_datetime64_any_dtype(type(value)) or isinstance(value, pd.Timestamp):
+                # Format date
+                cell.number_format = 'DD/MM/YYYY'
+            
+            # Bordures et alignement
+            cell.border = thin_border
+            if isinstance(value, (int, float)) and not pd.isna(value):
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+            else:
+                cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    
+    # Ajuster la largeur des colonnes automatiquement
+    for col in ws.columns:
+        max_length = 0
+        col_letter = get_column_letter(col[0].column)
+        
+        for cell in col:
+            try:
+                if cell.value:
+                    # Calculer la longueur du contenu
+                    content_length = len(str(cell.value))
+                    if content_length > max_length:
+                        max_length = content_length
+            except:
+                pass
+        
+        # Définir la largeur avec une marge
+        adjusted_width = min(max_length + 2, 50)  # Maximum 50 caractères
+        ws.column_dimensions[col_letter].width = adjusted_width
+    
+    # Créer un tableau Excel formaté (Table object)
+    if len(df) > 0:
+        table_range = f"A1:{get_column_letter(len(df.columns))}{len(df) + 1}"
+        table = Table(displayName="TableVeille", ref=table_range)
+        
+        # Style du tableau (style professionnel bleu)
+        style = TableStyleInfo(
+            name="TableStyleMedium9",
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False
+        )
+        table.tableStyleInfo = style
+        
+        # Ajouter le tableau à la worksheet
+        ws.add_table(table)
+    
+    # Congeler la première ligne (en-tête)
+    ws.freeze_panes = "A2"
+    
+    # Sauvegarder dans un buffer en mémoire
+    excel_buffer = io.BytesIO()
+    wb.save(excel_buffer)
+    excel_buffer.seek(0)
+    
+    return excel_buffer
 
 
 def render_database_tab(
@@ -49,22 +212,50 @@ def render_database_tab(
         st.subheader("🔧 Actions")
         
         # Export des données
-        if st.button("📥 Exporter toutes les données"):
-            try:
-                all_data = db_manager.get_all_data()
-                csv_data = all_data.to_csv(index=False)
-                
-                st.download_button(
-                    label="💾 Télécharger CSV",
-                    data=csv_data,
-                    file_name=f"export_veille_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
-                )
-                
-                st.success("✅ Export prêt au téléchargement")
-                
-            except Exception as e:
-                st.error(f"❌ Erreur lors de l'export: {e}")
+        col_export1, col_export2 = st.columns(2)
+        
+        with col_export1:
+            if st.button("📥 Exporter en Excel (formaté)"):
+                try:
+                    all_data = db_manager.get_all_data()
+                    
+                    if all_data.empty:
+                        st.warning("⚠️ Aucune donnée à exporter")
+                    else:
+                        # Créer un fichier Excel formaté en mémoire
+                        excel_buffer = create_formatted_excel(all_data)
+                        
+                        st.download_button(
+                            label="💾 Télécharger Excel formaté",
+                            data=excel_buffer.getvalue(),
+                            file_name=f"export_veille_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                        
+                        st.success(f"✅ Export Excel prêt : {len(all_data)} lignes")
+                        
+                except Exception as e:
+                    st.error(f"❌ Erreur lors de l'export Excel: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+        
+        with col_export2:
+            if st.button("📄 Exporter en CSV"):
+                try:
+                    all_data = db_manager.get_all_data()
+                    csv_data = all_data.to_csv(index=False)
+                    
+                    st.download_button(
+                        label="💾 Télécharger CSV",
+                        data=csv_data,
+                        file_name=f"export_veille_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
+                    )
+                    
+                    st.success(f"✅ Export CSV prêt : {len(all_data)} lignes")
+                    
+                except Exception as e:
+                    st.error(f"❌ Erreur lors de l'export CSV: {e}")
         
         # Recherche dans la base
         st.subheader("🔍 Recherche")
@@ -85,36 +276,42 @@ def render_database_tab(
         
         with col1:
             if st.button("💾 Créer sauvegarde"):
-                if hasattr(db_manager, 'create_backup'):
-                    if db_manager.create_backup():
-                        st.success("✅ Sauvegarde créée!")
+                if verify_maintenance_code("créer une sauvegarde"):
+                    if hasattr(db_manager, 'create_backup'):
+                        if db_manager.create_backup():
+                            st.success("✅ Sauvegarde créée!")
+                            st.session_state.maintenance_authorized = False  # Réinitialiser après action
+                        else:
+                            st.error("❌ Erreur création sauvegarde")
                     else:
-                        st.error("❌ Erreur création sauvegarde")
-                else:
-                    st.warning("⚠️ Fonction de sauvegarde non disponible")
+                        st.warning("⚠️ Fonction de sauvegarde non disponible")
         
         with col2:
             if st.button("🔍 Valider intégrité"):
-                if hasattr(db_manager, 'validate_data_integrity'):
-                    validation = db_manager.validate_data_integrity()
-                    if validation['is_valid']:
-                        st.success("✅ Intégrité validée")
+                if verify_maintenance_code("valider l'intégrité"):
+                    if hasattr(db_manager, 'validate_data_integrity'):
+                        validation = db_manager.validate_data_integrity()
+                        if validation['is_valid']:
+                            st.success("✅ Intégrité validée")
+                        else:
+                            st.warning("⚠️ Problèmes détectés")
+                            for issue in validation['issues']:
+                                st.write(f"• {issue}")
+                        st.session_state.maintenance_authorized = False  # Réinitialiser après action
                     else:
-                        st.warning("⚠️ Problèmes détectés")
-                        for issue in validation['issues']:
-                            st.write(f"• {issue}")
-                else:
-                    st.warning("⚠️ Fonction de validation non disponible")
+                        st.warning("⚠️ Fonction de validation non disponible")
         
         with col3:
             if st.button("⚡ Optimiser base"):
-                if hasattr(db_manager, 'optimize_database'):
-                    if db_manager.optimize_database():
-                        st.success("✅ Base optimisée!")
+                if verify_maintenance_code("optimiser la base"):
+                    if hasattr(db_manager, 'optimize_database'):
+                        if db_manager.optimize_database():
+                            st.success("✅ Base optimisée!")
+                            st.session_state.maintenance_authorized = False  # Réinitialiser après action
+                        else:
+                            st.error("❌ Erreur optimisation")
                     else:
-                        st.error("❌ Erreur optimisation")
-                else:
-                    st.warning("⚠️ Fonction d'optimisation non disponible")
+                        st.warning("⚠️ Fonction d'optimisation non disponible")
         
         # Informations détaillées de la base
         if hasattr(db_manager, 'get_database_info'):
@@ -160,13 +357,18 @@ def render_database_tab(
         
         # Nettoyage de la base
         if st.button("🗑️ Vider la base de données", type="secondary"):
-            if st.checkbox("Confirmer la suppression de toutes les données"):
-                try:
-                    cursor = db_manager.connection.cursor()
-                    cursor.execute("DELETE FROM appels_offres")
-                    db_manager.connection.commit()
-                    st.success("✅ Base de données vidée")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Erreur lors du nettoyage: {e}")
+            if verify_maintenance_code("vider la base de données"):
+                st.warning("⚠️ ATTENTION : Cette action est irréversible !")
+                if st.checkbox("Confirmer la suppression de toutes les données"):
+                    try:
+                        cursor = db_manager.connection.cursor()
+                        cursor.execute("DELETE FROM appels_offres")
+                        db_manager.connection.commit()
+                        st.success("✅ Base de données vidée")
+                        st.session_state.maintenance_authorized = False  # Réinitialiser après action
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Erreur lors du nettoyage: {e}")
+
+
 
