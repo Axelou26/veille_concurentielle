@@ -71,30 +71,39 @@ class PatternManager:
             },
             'dates': {
                 'limite': [
-                    # Patterns avec contexte complet
-                    r'(?:date|échéance|clôture|cloture|fin|expiration)[\s\w]*(?:limite|remise|offres|candidature|soumission|dépôt|depot)[\s\w]*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
-                    r'(?:date|échéance|clôture|cloture|fin|expiration)[\s\w]*(?:limite|remise|offres|candidature|soumission|dépôt|depot)[\s\w]*[:\s]*(\d{4}-\d{2}-\d{2})',
-                    r'(?:date|échéance|clôture|cloture|fin|expiration)[\s\w]*(?:limite|remise|offres|candidature|soumission|dépôt|depot)[\s\w]*[:\s]*(\d{1,2}\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+\d{4})',
-                    # Patterns avec variations de format
-                    r'(?:date|échéance|clôture|cloture|fin|expiration)[\s\w]*(?:limite|remise|offres|candidature|soumission|dépôt|depot)[\s\w]*[:\s]*(\d{1,2}\s+(?:janv|févr|mars|avr|mai|juin|juil|août|sept|oct|nov|déc)\.?\s+\d{4})',
+                    # Patterns très spécifiques avec contexte complet (priorité haute)
+                    r'(?:date|échéance|clôture|cloture|fin|expiration|dernière)[\s\w]*(?:limite|remise|offres|candidature|soumission|dépôt|depot|réception|reception)[\s\w]*[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    r'(?:date|échéance|clôture|cloture|fin|expiration|dernière)[\s\w]*(?:limite|remise|offres|candidature|soumission|dépôt|depot|réception|reception)[\s\w]*[:\s\-]*(\d{4}-\d{2}-\d{2})',
+                    r'(?:date|échéance|clôture|cloture|fin|expiration|dernière)[\s\w]*(?:limite|remise|offres|candidature|soumission|dépôt|depot|réception|reception)[\s\w]*[:\s\-]*(\d{1,2}\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+\d{4})',
+                    # Patterns avec variations de format (mois abrégés)
+                    r'(?:date|échéance|clôture|cloture|fin|expiration|dernière)[\s\w]*(?:limite|remise|offres|candidature|soumission|dépôt|depot|réception|reception)[\s\w]*[:\s\-]*(\d{1,2}\s+(?:janv|févr|mars|avr|mai|juin|juil|août|sept|oct|nov|déc)\.?\s+\d{4})',
+                    # Patterns avec "au plus tard"
+                    r'(?:au\s+plus\s+tard|avant\s+le|jusqu[\'"]?au)[\s\w]*[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    r'(?:au\s+plus\s+tard|avant\s+le|jusqu[\'"]?au)[\s\w]*[:\s\-]*(\d{1,2}\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+\d{4})',
                     # Patterns avec contexte d'appel d'offres
-                    r'(?:appel|offre|ao|consultation|marché|marche)[\s\w]*(?:date|échéance|clôture|cloture|fin)[\s\w]*(?:limite|remise|offres|candidature|soumission|dépôt|depot)[\s\w]*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
-                    # Patterns génériques
-                    r'(?:date|échéance|clôture|cloture|fin|expiration)[\s\w]*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
-                    r'(?:date|échéance|clôture|cloture|fin|expiration)[\s\w]*[:\s]*(\d{4}-\d{2}-\d{2})',
-                    # Patterns avec format français
-                    r'(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
-                    r'(\d{4}-\d{2}-\d{2})'
+                    r'(?:appel|offre|ao|consultation|marché|marche|rc)[\s\w]*(?:date|échéance|clôture|cloture|fin)[\s\w]*(?:limite|remise|offres|candidature|soumission|dépôt|depot)[\s\w]*[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    # Patterns avec format "JJ/MM/YYYY" ou "DD/MM/YY"
+                    r'(?:remise|dépôt|depot|soumission)[\s\w]*(?:des?\s+)?(?:offres|candidatures)[\s\w]*[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    # Patterns génériques (moins prioritaires)
+                    r'(?:date|échéance|clôture|cloture|fin|expiration)[\s\w]*[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    r'(?:date|échéance|clôture|cloture|fin|expiration)[\s\w]*[:\s\-]*(\d{4}-\d{2}-\d{2})'
                 ],
                 'attribution': [
-                    # Patterns avec contexte complet
-                    r'(?:date|attribution|attribué|attribue|attribution)[\s\w]*(?:marché|marche|contrat|prestation|lot)[\s\w]*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
-                    r'(?:date|attribution|attribué|attribue|attribution)[\s\w]*(?:marché|marche|contrat|prestation|lot)[\s\w]*[:\s]*(\d{4}-\d{2}-\d{2})',
-                    r'(?:attribution|attribué|attribue|attribution)[\s\w]*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
-                    r'(?:attribution|attribué|attribue|attribution)[\s\w]*[:\s]*(\d{4}-\d{2}-\d{2})',
+                    # Patterns très spécifiques avec contexte complet (priorité haute)
+                    r'(?:date|jour)[\s\w]*(?:d[\'"]?attribution|attribué|attribue)[\s\w]*(?:du\s+)?(?:marché|marche|contrat|prestation|lot)[\s\w]*[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    r'(?:date|jour)[\s\w]*(?:d[\'"]?attribution|attribué|attribue)[\s\w]*(?:du\s+)?(?:marché|marche|contrat|prestation|lot)[\s\w]*[:\s\-]*(\d{4}-\d{2}-\d{2})',
+                    r'(?:marché|marche|contrat|prestation|lot)[\s\w]*(?:attribué|attribue|attribution)[\s\w]*(?:le|le\s+)?[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    r'(?:marché|marche|contrat|prestation|lot)[\s\w]*(?:attribué|attribue|attribution)[\s\w]*(?:le|le\s+)?[:\s\-]*(\d{1,2}\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+\d{4})',
+                    # Patterns avec "attribué le"
+                    r'(?:attribué|attribue|attribution)[\s\w]*(?:le|en|du)[\s\w]*[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    r'(?:attribué|attribue|attribution)[\s\w]*(?:le|en|du)[\s\w]*[:\s\-]*(\d{4}-\d{2}-\d{2})',
+                    r'(?:attribué|attribue|attribution)[\s\w]*(?:le|en|du)[\s\w]*[:\s\-]*(\d{1,2}\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+\d{4})',
                     # Patterns avec contexte d'appel d'offres
-                    r'(?:appel|offre|ao|consultation)[\s\w]*(?:attribution|attribué|attribue|attribution)[\s\w]*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
-                    r'(?:appel|offre|ao|consultation)[\s\w]*(?:attribution|attribué|attribue|attribution)[\s\w]*[:\s]*(\d{4}-\d{2}-\d{2})'
+                    r'(?:appel|offre|ao|consultation|rc)[\s\w]*(?:attribué|attribue|attribution)[\s\w]*(?:le|en)[\s\w]*[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    r'(?:appel|offre|ao|consultation|rc)[\s\w]*(?:attribué|attribue|attribution)[\s\w]*(?:le|en)[\s\w]*[:\s\-]*(\d{4}-\d{2}-\d{2})',
+                    # Patterns génériques (moins prioritaires)
+                    r'(?:attribution|attribué|attribue)[\s\w]*[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    r'(?:attribution|attribué|attribue)[\s\w]*[:\s\-]*(\d{4}-\d{2}-\d{2})'
                 ]
             },
             'references': {
@@ -286,24 +295,62 @@ class PatternManager:
             },
             'durees': {
                 'duree_marche': [
-                    r'(?:durée|duree)[\s\w]{0,40}?(?:marché|marche)?[\s\w]{0,20}?(\d{1,3})\s*(?:mois|ans|an)',
-                    r'(\d{1,3})\s*(?:mois|ans|an)[\s\w]{0,20}?(?:durée|duree)'
+                    # Patterns très spécifiques avec contexte complet (priorité haute)
+                    r'(?:durée|duree)[\s\w]{0,40}?(?:du\s+)?(?:marché|marche|contrat|prestation)[\s\w]{0,20}[:\s\-]*(\d{1,3})\s*(?:mois|mois\.|m\.?)',
+                    r'(?:durée|duree)[\s\w]{0,40}?(?:du\s+)?(?:marché|marche|contrat|prestation)[\s\w]{0,20}[:\s\-]*(\d{1,3})\s*(?:ans|an|année|annee|années|annees)',
+                    r'(?:marché|marche|contrat|prestation)[\s\w]{0,40}?(?:d[\'"]?une?\s+)?(?:durée|duree)[\s\w]{0,20}[:\s\-]*(\d{1,3})\s*(?:mois|mois\.|m\.?)',
+                    r'(?:marché|marche|contrat|prestation)[\s\w]{0,40}?(?:d[\'"]?une?\s+)?(?:durée|duree)[\s\w]{0,20}[:\s\-]*(\d{1,3})\s*(?:ans|an|année|annee|années|annees)',
+                    # Patterns avec conversion ans -> mois
+                    r'(?:durée|duree)[\s\w]{0,40}?(?:du\s+)?(?:marché|marche|contrat|prestation)[\s\w]{0,20}[:\s\-]*(\d{1,2})\s*(?:ans|an|année|annee)(?:\s+(?:et|,)?\s*(\d{1,2})\s*(?:mois|mois\.|m\.?))?',
+                    # Patterns avec format "X mois renouvelable"
+                    r'(?:durée|duree)[\s\w]{0,40}?[:\s\-]*(\d{1,3})\s*(?:mois|mois\.|m\.?)(?:[\s\w]{0,20}?(?:renouvelable|reconduction))?',
+                    # Patterns avec format "X ans"
+                    r'(?:durée|duree)[\s\w]{0,40}?[:\s\-]*(\d{1,2})\s*(?:ans|an|année|annee)',
+                    # Patterns génériques
+                    r'(\d{1,3})\s*(?:mois|mois\.|m\.?)[\s\w]{0,20}?(?:durée|duree|de\s+marche|du\s+marche)',
+                    r'(\d{1,2})\s*(?:ans|an|année|annee)[\s\w]{0,20}?(?:durée|duree|de\s+marche|du\s+marche)'
                 ],
                 'execution_marche': [
                     r'(?:modalités?|modalites?|conditions?)\s+d[\'\"]?ex[ée]cution[\s\w:,-]{0,10}(.+)',
                     r'ex[ée]cution\s+du\s+march[é|e]\s*[:\-]?\s*(.+)'
                 ],
                 'reconduction': [
-                    r'(?:reconduction|reconductible|renouvellement)[\s\w:,-]{0,20}(oui|non)',
-                    r'(?:reconduction|reconductible|renouvellement)[\s\w:,-]{0,50}?(\d{1,2})\s*(?:fois|ans|an)'
+                    # Patterns très spécifiques pour oui/non
+                    r'(?:reconduction|reconductible|renouvellement)[\s\w:,-]{0,20}[:\s\-]*\s*(oui|non|possible|impossible|autorisée|autorisé|autorisée|non\s+autorisée|non\s+autorisé)',
+                    r'(?:marché|marche|contrat)[\s\w]{0,20}?(?:reconduction|reconductible|renouvellement)[\s\w:,-]{0,20}[:\s\-]*\s*(oui|non|possible|impossible|autorisée|autorisé|autorisée)',
+                    r'(?:reconduction|reconductible|renouvellement)[\s\w]{0,20}?(?:prévue|prevue|possible|autorisée|autorisé)[\s\w:,-]{0,10}[:\s\-]*\s*(oui|non|possible|impossible)',
+                    # Patterns pour détecter l'absence (sans mention = non spécifié)
+                    r'(?:sans\s+reconduction|sans\s+renouvellement|non\s+reconduction|non\s+renouvellement)',
+                    r'(?:reconduction|renouvellement)[\s\w]{0,20}?(?:non\s+prévue|non\s+prevue|non\s+autorisée|non\s+autorisé)',
+                    # Patterns pour nombre de reconductions
+                    r'(?:reconduction|reconductible|renouvellement)[\s\w:,-]{0,50}?[:\s\-]*\s*(\d{1,2})\s*(?:fois|fois\.?|fois\s+de\s+\d{1,2}\s+mois)',
+                    r'(?:reconduction|reconductible|renouvellement)[\s\w:,-]{0,50}?[:\s\-]*\s*(\d{1,2})\s*(?:ans|an|année|annee)',
+                    # Pattern pour détecter si mentionné (même sans oui/non explicite)
+                    r'(?:reconduction|reconductible|renouvellement)[\s\w]{0,30}?(?:possible|prévue|prevue|autorisée|autorisé)'
                 ],
                 'fin_sans_reconduction': [
-                    r'fin\s+sans\s+reconduction[\s\w:,-]{0,10}(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
-                    r'fin\s+sans\s+reconduction[\s\w:,-]{0,10}(\d{4}-\d{2}-\d{2})'
+                    # Patterns très spécifiques
+                    r'(?:fin|échéance|expiration)[\s\w]{0,10}?(?:sans|non\s+)?(?:reconduction|renouvellement)[\s\w:,-]{0,20}[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    r'(?:fin|échéance|expiration)[\s\w]{0,10}?(?:sans|non\s+)?(?:reconduction|renouvellement)[\s\w:,-]{0,20}[:\s\-]*(\d{4}-\d{2}-\d{2})',
+                    r'(?:fin|échéance|expiration)[\s\w]{0,10}?(?:sans|non\s+)?(?:reconduction|renouvellement)[\s\w:,-]{0,20}[:\s\-]*(\d{1,2}\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+\d{4})',
+                    # Patterns avec "du marché"
+                    r'(?:fin|échéance|expiration)[\s\w]{0,10}?(?:du\s+)?(?:marché|marche|contrat)[\s\w]{0,10}?(?:sans|non\s+)?(?:reconduction|renouvellement)[\s\w:,-]{0,20}[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    # Patterns directs
+                    r'fin\s+sans\s+reconduction[\s\w:,-]{0,20}[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    r'fin\s+sans\s+reconduction[\s\w:,-]{0,20}[:\s\-]*(\d{4}-\d{2}-\d{2})',
+                    r'fin\s+sans\s+renouvellement[\s\w:,-]{0,20}[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
                 ],
                 'fin_avec_reconduction': [
-                    r'fin\s+avec\s+reconduction[\s\w:,-]{0,10}(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
-                    r'fin\s+avec\s+reconduction[\s\w:,-]{0,10}(\d{4}-\d{2}-\d{2})'
+                    # Patterns très spécifiques
+                    r'(?:fin|échéance|expiration)[\s\w]{0,10}?(?:avec|en\s+tenant\s+compte\s+de|incluant)[\s\w]{0,10}?(?:la\s+)?(?:reconduction|renouvellement)[\s\w:,-]{0,20}[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    r'(?:fin|échéance|expiration)[\s\w]{0,10}?(?:avec|en\s+tenant\s+compte\s+de|incluant)[\s\w]{0,10}?(?:la\s+)?(?:reconduction|renouvellement)[\s\w:,-]{0,20}[:\s\-]*(\d{4}-\d{2}-\d{2})',
+                    r'(?:fin|échéance|expiration)[\s\w]{0,10}?(?:avec|en\s+tenant\s+compte\s+de|incluant)[\s\w]{0,10}?(?:la\s+)?(?:reconduction|renouvellement)[\s\w:,-]{0,20}[:\s\-]*(\d{1,2}\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+\d{4})',
+                    # Patterns avec "du marché"
+                    r'(?:fin|échéance|expiration)[\s\w]{0,10}?(?:du\s+)?(?:marché|marche|contrat)[\s\w]{0,10}?(?:avec|incluant)[\s\w]{0,10}?(?:la\s+)?(?:reconduction|renouvellement)[\s\w:,-]{0,20}[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    # Patterns directs
+                    r'fin\s+avec\s+reconduction[\s\w:,-]{0,20}[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                    r'fin\s+avec\s+reconduction[\s\w:,-]{0,20}[:\s\-]*(\d{4}-\d{2}-\d{2})',
+                    r'fin\s+avec\s+renouvellement[\s\w:,-]{0,20}[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
                 ]
             },
             'rse': {

@@ -144,7 +144,7 @@ class PDFExtractor(BaseExtractor):
     
     def _extract_text_from_bytes(self, pdf_bytes: bytes) -> str:
         """
-        Extrait le texte depuis des bytes PDF
+        Extrait le texte depuis des bytes PDF avec support OCR pour PDFs scannés
         
         Args:
             pdf_bytes: Contenu PDF en bytes
@@ -164,7 +164,7 @@ class PDFExtractor(BaseExtractor):
                 for page in pdf_reader.pages:
                     text += page.extract_text() + "\n"
                 
-                if text.strip():
+                if text.strip() and len(text.strip()) > 100:
                     logger.info("✅ Texte extrait avec PyPDF2")
                     return text
                     
@@ -184,7 +184,7 @@ class PDFExtractor(BaseExtractor):
                         if page_text:
                             text += page_text + "\n"
                 
-                if text.strip():
+                if text.strip() and len(text.strip()) > 100:
                     logger.info("✅ Texte extrait avec pdfplumber")
                     return text
                     
@@ -196,7 +196,6 @@ class PDFExtractor(BaseExtractor):
             # Essayer avec pymupdf
             try:
                 import fitz  # PyMuPDF
-                from io import BytesIO
                 
                 pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
                 text = ""
@@ -207,7 +206,7 @@ class PDFExtractor(BaseExtractor):
                 
                 pdf_document.close()
                 
-                if text.strip():
+                if text.strip() and len(text.strip()) > 100:
                     logger.info("✅ Texte extrait avec PyMuPDF")
                     return text
                     
@@ -216,12 +215,158 @@ class PDFExtractor(BaseExtractor):
             except Exception as e:
                 logger.warning(f"Erreur PyMuPDF: {e}")
             
-            logger.warning("⚠️ Aucune bibliothèque PDF disponible")
+            # Si peu ou pas de texte, essayer OCR (PDF scanné)
+            text = self._extract_text_with_ocr(pdf_bytes)
+            if text and len(text.strip()) > 100:
+                logger.info("✅ Texte extrait avec OCR")
+                return text
+            
+            logger.warning("⚠️ Aucune bibliothèque PDF disponible ou texte insuffisant")
             return ""
             
         except Exception as e:
             logger.error(f"Erreur extraction texte depuis bytes: {e}")
             return ""
+    
+    def _extract_text_with_ocr(self, pdf_bytes: bytes) -> str:
+        """
+        Extrait le texte d'un PDF scanné avec OCR
+        
+        Args:
+            pdf_bytes: Contenu PDF en bytes
+            
+        Returns:
+            Texte extrait via OCR
+        """
+        try:
+            # Essayer avec pytesseract
+            try:
+                import pytesseract
+                from pdf2image import convert_from_bytes
+                
+                # Convertir le PDF en images
+                images = convert_from_bytes(pdf_bytes, dpi=300)
+                
+                ocr_text = ""
+                for img in images:
+                    # Extraire le texte avec OCR (français)
+                    page_text = pytesseract.image_to_string(img, lang='fra')
+                    if page_text:
+                        ocr_text += page_text + "\n"
+                
+                if ocr_text.strip():
+                    logger.info(f"✅ OCR pytesseract: {len(ocr_text)} caractères extraits")
+                    return ocr_text
+                    
+            except ImportError:
+                logger.debug("pytesseract non disponible")
+            except Exception as e:
+                logger.debug(f"Erreur OCR pytesseract: {e}")
+            
+            # Essayer avec easyocr (alternative)
+            try:
+                import easyocr
+                
+                reader = easyocr.Reader(['fr', 'en'])
+                images = convert_from_bytes(pdf_bytes, dpi=300)
+                
+                ocr_text = ""
+                for img in images:
+                    results = reader.readtext(img)
+                    page_text = "\n".join([result[1] for result in results])
+                    if page_text:
+                        ocr_text += page_text + "\n"
+                
+                if ocr_text.strip():
+                    logger.info(f"✅ OCR easyocr: {len(ocr_text)} caractères extraits")
+                    return ocr_text
+                    
+            except ImportError:
+                logger.debug("easyocr non disponible")
+            except Exception as e:
+                logger.debug(f"Erreur OCR easyocr: {e}")
+            
+            return ""
+            
+        except Exception as e:
+            logger.debug(f"Erreur OCR: {e}")
+            return ""
+    
+    def _extract_tables_from_pdf(self, pdf_bytes: bytes) -> List[Dict[str, Any]]:
+        """
+        Extrait les tableaux structurés du PDF
+        
+        Args:
+            pdf_bytes: Contenu PDF en bytes
+            
+        Returns:
+            Liste des tableaux extraits avec leurs données structurées
+        """
+        tables_data = []
+        
+        try:
+            import pdfplumber
+            
+            with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+                for page_num, page in enumerate(pdf.pages):
+                    tables = page.extract_tables()
+                    
+                    for table_index, table in enumerate(tables):
+                        if table and len(table) > 0:
+                            # Structurer le tableau
+                            structured_table = self._structure_table(table)
+                            
+                            if structured_table:
+                                tables_data.append({
+                                    'page': page_num + 1,
+                                    'table_index': table_index,
+                                    'rows': len(table),
+                                    'columns': len(table[0]) if table else 0,
+                                    'data': structured_table
+                                })
+                                logger.debug(f"📊 Tableau extrait page {page_num + 1}, table {table_index}: {len(structured_table)} entrées")
+            
+            if tables_data:
+                logger.info(f"✅ {len(tables_data)} tableaux structurés extraits du PDF")
+            
+        except ImportError:
+            logger.warning("pdfplumber non disponible pour extraction de tableaux")
+        except Exception as e:
+            logger.warning(f"Erreur extraction tableaux: {e}")
+        
+        return tables_data
+    
+    def _structure_table(self, table: List[List]) -> List[Dict[str, Any]]:
+        """
+        Structure un tableau extrait en dictionnaire
+        
+        Args:
+            table: Tableau brut extrait (liste de listes)
+            
+        Returns:
+            Liste de dictionnaires structurés
+        """
+        if not table or len(table) < 2:
+            return []
+        
+        structured = []
+        headers = [str(cell).strip() if cell else f"Col_{i}" 
+                  for i, cell in enumerate(table[0])]
+        
+        for row in table[1:]:
+            if not row or not any(cell for cell in row):
+                continue
+            
+            row_dict = {}
+            for i, cell in enumerate(row):
+                header = headers[i] if i < len(headers) else f"Col_{i}"
+                row_dict[header] = str(cell).strip() if cell else ""
+            
+            # Filtrer les lignes vides
+            if any(row_dict.values()):
+                structured.append(row_dict)
+        
+        return structured
     
     def _create_entries_for_lots(self, lots: List[LotInfo], text_content: str) -> List[Dict[str, Any]]:
         """
@@ -244,6 +389,12 @@ class PDFExtractor(BaseExtractor):
             
             # Extraire les critères par lot
             criteres_par_lot = self._extract_criteres_by_lot(text_content, lots)
+            
+            # Log des informations générales AVANT de créer les entrées
+            logger.info(f"📋 General info avant création entrées: {list(general_info.keys())}")
+            for date_field in ['date_limite', 'date_attribution', 'duree_marche', 'reconduction', 'fin_sans_reconduction', 'fin_avec_reconduction']:
+                if date_field in general_info:
+                    logger.info(f"✅ {date_field} dans general_info: '{general_info[date_field]}'")
             
             for lot in lots:
                 # Créer une entrée pour ce lot
@@ -383,9 +534,19 @@ class PDFExtractor(BaseExtractor):
                 patterns = self.pattern_manager.get_field_patterns(field)
                 if patterns:
                     pattern_groups[field] = patterns
+                # Log pour les champs de dates importants
+                if field in ['date_limite', 'date_attribution', 'duree_marche', 'reconduction']:
+                    logger.debug(f"🔍 Patterns pour {field}: {len(patterns)} patterns chargés")
 
             # Extraire d'abord par sections pour réduire les faux positifs
             sections = self._split_into_sections(text_content)
+            
+            # Log des sections trouvées pour les dates
+            for section_field in ['date_limite', 'date_attribution', 'duree_marche', 'reconduction', 'fin_sans_reconduction', 'fin_avec_reconduction']:
+                if section_field in sections:
+                    logger.info(f"📋 Section trouvée pour {section_field}: {sections[section_field][:100]}...")
+                else:
+                    logger.debug(f"⚠️ Pas de section trouvée pour {section_field}, recherche dans tout le texte")
 
             # Extraction combinée: par section (si disponible), sinon sur tout le texte
             if pattern_groups:
@@ -399,6 +560,13 @@ class PDFExtractor(BaseExtractor):
                     # Exécuter extraction ciblée champ par champ pour passer la section
                     values = self.extract_with_patterns(section_text, patterns, field)
                     parallel_results[field] = values
+                    
+                    # Log pour debug - TOUJOURS logger même si vide
+                    if field in ['date_limite', 'date_attribution', 'duree_marche', 'reconduction', 'fin_sans_reconduction', 'fin_avec_reconduction']:
+                        if values:
+                            logger.info(f"✅ {field}: {values[:3]}")  # Afficher les 3 premières valeurs
+                        else:
+                            logger.warning(f"❌ {field}: Aucune valeur trouvée (section: {bool(sections.get(field))}, patterns: {len(patterns)})")
                 for field, values in parallel_results.items():
                     if values:
                         cleaned_value = self.clean_extracted_value(values[0], self._get_field_type(field))
@@ -418,8 +586,19 @@ class PDFExtractor(BaseExtractor):
                                 general_info[field] = cleaned_value
 
             logger.info(f"📊 Informations générales extraites: {len(general_info)} champs")
+            
+            # Log explicite des dates extraites (avec liste complète des champs)
+            date_fields = ['date_limite', 'date_attribution', 'duree_marche', 'reconduction', 'fin_sans_reconduction', 'fin_avec_reconduction']
+            logger.info(f"📋 Champs généraux disponibles: {list(general_info.keys())}")
+            for date_field in date_fields:
+                if date_field in general_info:
+                    logger.info(f"✅ {date_field} EXTRAIT: '{general_info[date_field]}'")
+                else:
+                    logger.warning(f"❌ {date_field} MANQUANT dans general_info")
         except Exception as e:
             logger.error(f"Erreur extraction informations générales PDF: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         return general_info
 
     def _split_into_sections(self, text: str) -> Dict[str, str]:
@@ -444,7 +623,10 @@ class PDFExtractor(BaseExtractor):
             stops = ["\n\n", "\narticle", "\nsection", "\nchapitre", "\nannexe", "\nlot "]
 
             # Map sections -> champs
+            # IMPORTANT: Ajouter les sections pour les dates importantes
             sections_raw = {
+                'date_limite': grab('date limite', stops) or grab('échéance', stops) or grab('clôture', stops) or grab('cloture', stops) or grab('remise', stops) or grab('dépôt', stops) or grab('depot', stops),
+                'date_attribution': grab('date attribution', stops) or grab('attribution', stops) or grab('attribué', stops) or grab('attribue', stops),
                 'duree_marche': grab('durée', stops) or grab('duree', stops),
                 'execution_marche': grab("exécution du marché", stops) or grab('execution du marche', stops),
                 'reconduction': grab('reconduction', stops) or grab('renouvellement', stops),
@@ -555,6 +737,8 @@ class PDFExtractor(BaseExtractor):
             return 'date'
         elif 'duree' in field_name.lower() or 'durée' in field_name.lower():
             return 'duree'
+        elif 'reconduction' in field_name.lower():
+            return 'reconduction'
         elif 'reference' in field_name.lower():
             return 'reference'
         else:

@@ -897,6 +897,10 @@ class VeilleAIEngine:
             # Stocker les données pour l'affichage en tableau
             self._last_table_data = self._prepare_table_data(df)
             
+            # Préparer les données pour les graphiques
+            self._last_graph_data = self._prepare_graph_data(df, 'list')
+            logger.info(f"📊 Graphiques préparés: {len(self._last_graph_data.get('data', {}))} types disponibles")
+            
             response = f"📋 **Liste des résultats**\n\n"
             
             if filters_desc:
@@ -907,19 +911,8 @@ class VeilleAIEngine:
             # Ajouter un indicateur spécial pour l'affichage en tableau
             response += "```TABLEAU_STREAMLIT```\n\n"
             
-            # Ajouter un résumé des premiers résultats
-            response += "**Aperçu des premiers résultats**:\n\n"
-            
-            display_df = self._last_table_data
-            for idx, row in display_df.head(5).iterrows():
-                response += f"**Lot #{idx+1}**:\n"
-                for col in display_df.columns:
-                    if pd.notna(row[col]) and str(row[col]).strip() and str(row[col]) != "N/A":
-                        response += f"  - {col}: {row[col]}\n"
-                response += "\n"
-            
-            if len(df) > 5:
-                response += f"*... et {len(df) - 5} autres résultats*\n"
+            # Ajouter un indicateur pour les graphiques
+            response += "```GRAPHIQUES_STREAMLIT```\n\n"
             
             return response
             
@@ -957,6 +950,10 @@ class VeilleAIEngine:
             # Stocker les données pour l'affichage en tableau
             self._last_table_data = self._prepare_table_data(all_results)
             
+            # Préparer les données pour les graphiques
+            self._last_graph_data = self._prepare_graph_data(all_results, 'search')
+            logger.info(f"📊 Graphiques préparés: {len(self._last_graph_data.get('data', {}))} types disponibles")
+            
             response = f"🔍 **Résultats de recherche pour '{search_term}'**\n\n"
             
             # Afficher les colonnes où le terme a été trouvé
@@ -972,19 +969,8 @@ class VeilleAIEngine:
             # Ajouter un indicateur spécial pour l'affichage en tableau
             response += "```TABLEAU_STREAMLIT```\n\n"
             
-            # Ajouter un résumé des premiers résultats
-            response += "**Aperçu des résultats**:\n\n"
-            
-            display_df = self._last_table_data
-            for idx, row in display_df.head(5).iterrows():
-                response += f"**Lot #{idx+1}**:\n"
-                for col in display_df.columns:
-                    if pd.notna(row[col]) and str(row[col]).strip() and str(row[col]) != "N/A":
-                        response += f"  - {col}: {row[col]}\n"
-                response += "\n"
-            
-            if len(all_results) > 5:
-                response += f"*... et {len(all_results) - 5} autres résultats*\n"
+            # Ajouter un indicateur pour les graphiques
+            response += "```GRAPHIQUES_STREAMLIT```\n\n"
             
             return response
             
@@ -1100,6 +1086,122 @@ class VeilleAIEngine:
     def get_last_table_data(self) -> Optional[pd.DataFrame]:
         """Retourne les dernières données préparées pour l'affichage en tableau"""
         return getattr(self, '_last_table_data', None)
+    
+    def get_last_graph_data(self) -> Optional[Dict[str, Any]]:
+        """Retourne les dernières données préparées pour l'affichage de graphiques"""
+        return getattr(self, '_last_graph_data', None)
+    
+    def _prepare_graph_data(self, df: pd.DataFrame, graph_type: str = 'distribution') -> Dict[str, Any]:
+        """Prépare les données pour différents types de graphiques"""
+        try:
+            graph_data = {
+                'type': graph_type,
+                'data': {}
+            }
+            
+            # Graphique de répartition par univers
+            if 'univers' in df.columns:
+                univers_dist = df['univers'].value_counts()
+                graph_data['data']['univers'] = {
+                    'labels': univers_dist.index.tolist(),
+                    'values': univers_dist.values.tolist(),
+                    'title': 'Répartition par Univers'
+                }
+            
+            # Graphique de répartition par groupement
+            if 'groupement' in df.columns:
+                groupement_dist = df['groupement'].value_counts()
+                graph_data['data']['groupement'] = {
+                    'labels': groupement_dist.index.tolist(),
+                    'values': groupement_dist.values.tolist(),
+                    'title': 'Répartition par Groupement'
+                }
+            
+            # Graphique de répartition par statut
+            if 'statut' in df.columns:
+                statut_dist = df['statut'].value_counts()
+                graph_data['data']['statut'] = {
+                    'labels': statut_dist.index.tolist(),
+                    'values': statut_dist.values.tolist(),
+                    'title': 'Répartition par Statut'
+                }
+            
+            # Graphique de distribution des montants (histogramme)
+            if 'montant_global_estime' in df.columns:
+                montants = df['montant_global_estime'].dropna()
+                if len(montants) > 0:
+                    # Créer des bins pour l'histogramme
+                    max_montant = montants.max()
+                    if max_montant > 0:
+                        bins = 20
+                        graph_data['data']['montants'] = {
+                            'values': montants.tolist(),
+                            'bins': bins,
+                            'title': 'Distribution des Montants',
+                            'xlabel': 'Montant (€)',
+                            'ylabel': 'Nombre de lots'
+                        }
+            
+            return graph_data
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur préparation graphiques: {e}")
+            return {'type': graph_type, 'data': {}}
+    
+    def _prepare_expiring_graph_data(self, expiring_lots: pd.DataFrame) -> Dict[str, Any]:
+        """Prépare les données de graphiques pour les lots expirants"""
+        try:
+            graph_data = {
+                'type': 'expiring_lots',
+                'data': {}
+            }
+            
+            # Graphique par niveau d'urgence
+            urgent_count = len(expiring_lots[expiring_lots['jours_restants'] <= 30])
+            warning_count = len(expiring_lots[(expiring_lots['jours_restants'] > 30) & (expiring_lots['jours_restants'] <= 60)])
+            normal_count = len(expiring_lots[expiring_lots['jours_restants'] > 60])
+            
+            graph_data['data']['urgence'] = {
+                'labels': ['🔴 Urgent (≤30j)', '🟠 Attention (31-60j)', '🟡 À surveiller (>60j)'],
+                'values': [urgent_count, warning_count, normal_count],
+                'title': 'Répartition par Niveau d\'Urgence'
+            }
+            
+            # Graphique timeline (dates d'expiration)
+            if 'date_fin' in expiring_lots.columns:
+                expiring_lots_sorted = expiring_lots.sort_values('date_fin')
+                graph_data['data']['timeline'] = {
+                    'dates': expiring_lots_sorted['date_fin'].dt.strftime('%Y-%m-%d').tolist(),
+                    'jours_restants': expiring_lots_sorted['jours_restants'].tolist(),
+                    'montants': expiring_lots_sorted['montant_global_estime'].fillna(0).tolist(),
+                    'title': 'Timeline des Expirations',
+                    'xlabel': 'Date de fin',
+                    'ylabel': 'Jours restants'
+                }
+            
+            # Graphique par univers pour les lots expirants
+            if 'univers' in expiring_lots.columns:
+                univers_dist = expiring_lots['univers'].value_counts()
+                graph_data['data']['univers'] = {
+                    'labels': univers_dist.index.tolist(),
+                    'values': univers_dist.values.tolist(),
+                    'title': 'Répartition par Univers (Lots Expirants)'
+                }
+            
+            # Graphique par groupement pour les lots expirants
+            if 'groupement' in expiring_lots.columns:
+                groupement_dist = expiring_lots['groupement'].value_counts()
+                graph_data['data']['groupement'] = {
+                    'labels': groupement_dist.index.tolist(),
+                    'values': groupement_dist.values.tolist(),
+                    'title': 'Répartition par Groupement (Lots Expirants)'
+                }
+            
+            return graph_data
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur préparation graphiques expirants: {e}")
+            return {'type': 'expiring_lots', 'data': {}}
     
     def _handle_distribution(self, question: str, intention: Dict[str, Any]) -> str:
         """Gère les questions de répartition/distribution"""
@@ -1364,6 +1466,9 @@ class VeilleAIEngine:
             # Préparer le tableau pour affichage
             self._last_table_data = self._prepare_expiring_table_data(expiring_lots)
             
+            # Préparer les données pour les graphiques
+            self._last_graph_data = self._prepare_expiring_graph_data(expiring_lots)
+            
             # Créer la réponse
             filters_desc = self._describe_filters(intention['filters'])
             
@@ -1390,22 +1495,8 @@ class VeilleAIEngine:
             
             response += "\n```TABLEAU_STREAMLIT```\n\n"
             
-            # Ajouter un résumé des premiers lots
-            response += "**Aperçu des lots les plus proches**:\n\n"
-            
-            display_df = self._last_table_data
-            for idx, row in display_df.head(5).iterrows():
-                days_left = expiring_lots.iloc[idx]['jours_restants']
-                urgency = "🔴" if days_left <= 30 else "🟠" if days_left <= 60 else "🟡"
-                
-                response += f"{urgency} **Lot #{idx+1}** (J-{days_left}):\n"
-                for col in display_df.columns:
-                    if pd.notna(row[col]) and str(row[col]).strip() and str(row[col]) != "N/A":
-                        response += f"  - {col}: {row[col]}\n"
-                response += "\n"
-            
-            if len(expiring_lots) > 5:
-                response += f"*... et {len(expiring_lots) - 5} autres lots*\n"
+            # Ajouter un indicateur pour les graphiques
+            response += "```GRAPHIQUES_STREAMLIT```\n\n"
             
             return response
             

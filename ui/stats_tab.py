@@ -6,6 +6,7 @@ Affiche les statistiques et visualisations des données
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from datetime import datetime, timedelta
 from database_manager import DatabaseManager
 
 
@@ -22,26 +23,93 @@ def render_stats_tab(data: pd.DataFrame, db_manager: DatabaseManager):
     # Statistiques de la base de données
     stats = db_manager.get_statistics()
     
+    # ===== MÉTRIQUES CLÉS =====
+    st.subheader("📊 Métriques Clés")
+    
     if stats:
-        col1, col2, col3, col4 = st.columns(4)
+        # Calculer le budget total
+        budget_total = 0
+        if 'montant_global_estime' in data.columns:
+            budget_total = data['montant_global_estime'].fillna(0).sum()
+        
+        # Calculer les métriques
+        total_lots = stats.get('total_lots', len(data))
+        executed_lots = len(data[data['statut'] == 'AO ATTRIBUÉ']) if 'statut' in data.columns else 0
+        execution_rate = (executed_lots / total_lots * 100) if total_lots > 0 else 0
+        avg_montant = stats.get('montant_stats', {}).get('moyenne', 0)
+        max_montant = stats.get('montant_stats', {}).get('maximum', 0)
+        
+        col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
-            st.metric("📊 Total Lots", stats.get('total_lots', 0))
+            st.metric("📊 Total Lots", f"{total_lots:,}")
         
         with col2:
-            avg_montant = stats.get('montant_stats', {}).get('moyenne', 0)
-            st.metric("💰 Budget Moyen", f"{avg_montant:,.0f}€" if avg_montant else "N/A")
+            st.metric("💰 Budget Total", f"{budget_total:,.0f}€" if budget_total > 0 else "N/A")
         
         with col3:
-            max_montant = stats.get('montant_stats', {}).get('maximum', 0)
-            st.metric("💰 Budget Max", f"{max_montant:,.0f}€" if max_montant else "N/A")
+            st.metric("💰 Budget Moyen", f"{avg_montant:,.0f}€" if avg_montant else "N/A")
         
         with col4:
-            # Calculer le pourcentage de marchés exécutés
-            total_lots = stats.get('total_lots', 0)
-            executed_lots = len(data[data['statut'] == 'AO ATTRIBUÉ']) if 'statut' in data.columns else 0
-            execution_rate = (executed_lots / total_lots * 100) if total_lots > 0 else 0
+            st.metric("💰 Budget Max", f"{max_montant:,.0f}€" if max_montant else "N/A")
+        
+        with col5:
             st.metric("✅ Taux d'exécution", f"{execution_rate:.1f}%")
+    
+    # ===== ALERTES =====
+    st.subheader("🔔 Alertes et Notifications")
+    
+    alert_cols = st.columns(3)
+    
+    with alert_cols[0]:
+        # Marchés expirant dans les 30 prochains jours
+        expiring_soon = 0
+        if 'fin_sans_reconduction' in data.columns or 'fin_avec_reconduction' in data.columns:
+            today = datetime.now().date()
+            threshold = today + timedelta(days=30)
+            
+            for date_col in ['fin_sans_reconduction', 'fin_avec_reconduction']:
+                if date_col in data.columns:
+                    for date_str in data[date_col].dropna():
+                        try:
+                            # Essayer différents formats de date
+                            date_obj = None
+                            for fmt in ['%d/%m/%Y', '%d-%m-%Y', '%Y-%m-%d']:
+                                try:
+                                    date_obj = datetime.strptime(str(date_str), fmt).date()
+                                    break
+                                except:
+                                    continue
+                            
+                            if date_obj and today <= date_obj <= threshold:
+                                expiring_soon += 1
+                        except:
+                            continue
+        
+        if expiring_soon > 0:
+            st.warning(f"⚠️ **{expiring_soon} marché(s) expirant dans les 30 jours**")
+        else:
+            st.success("✅ Aucun marché n'expire dans les 30 jours")
+    
+    with alert_cols[1]:
+        # Marchés avec montants élevés
+        high_value = 0
+        if 'montant_global_estime' in data.columns:
+            # Considérer comme montant élevé > 1M€
+            high_value = len(data[data['montant_global_estime'] > 1_000_000])
+        
+        if high_value > 0:
+            st.info(f"💎 **{high_value} marché(x) avec montant > 1M€**")
+        else:
+            st.info("💎 Aucun marché avec montant élevé")
+    
+    with alert_cols[2]:
+        # Marchés en cours
+        en_cours = len(data[data['statut'] == 'AO EN COURS']) if 'statut' in data.columns else 0
+        if en_cours > 0:
+            st.info(f"🔄 **{en_cours} marché(x) en cours**")
+        else:
+            st.info("🔄 Aucun marché en cours")
     
     # Statistiques par groupement
     if 'groupement' in data.columns:
@@ -107,25 +175,51 @@ def render_stats_tab(data: pd.DataFrame, db_manager: DatabaseManager):
             fig_pie_univers.update_traces(textposition='inside', textinfo='percent+label')
             st.plotly_chart(fig_pie_univers, width='stretch')
     
-    # Graphiques existants
-    if stats:
-        col1, col2 = st.columns(2)
+    # ===== TOP 5 UNIVERS =====
+    if 'univers' in data.columns:
+        st.subheader("🏆 Top 5 des Univers")
+        top_univers = data['univers'].value_counts().head(5)
         
-        with col1:
-            if stats.get('univers_stats'):
-                fig = px.pie(
-                    values=list(stats['univers_stats'].values()),
-                    names=list(stats['univers_stats'].keys()),
-                    title="Répartition par Univers"
-                )
-                st.plotly_chart(fig, width='stretch')
+        if len(top_univers) > 0:
+            fig_bar = px.bar(
+                x=top_univers.values,
+                y=top_univers.index,
+                orientation='h',
+                title="Top 5 des Univers par nombre de lots",
+                labels={'x': 'Nombre de lots', 'y': 'Univers'},
+                color=top_univers.values,
+                color_continuous_scale='Blues'
+            )
+            fig_bar.update_layout(showlegend=False)
+            st.plotly_chart(fig_bar, width='stretch')
+    
+    # ===== GRAPHIQUE PAR STATUT =====
+    if 'statut' in data.columns:
+        st.subheader("📊 Répartition par Statut")
+        statut_counts = data['statut'].value_counts()
         
-        with col2:
-            if stats.get('statut_stats'):
-                fig = px.bar(
-                    x=list(stats['statut_stats'].keys()),
-                    y=list(stats['statut_stats'].values()),
-                    title="Répartition par Statut"
+        if len(statut_counts) > 0:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig_pie_statut = px.pie(
+                    values=statut_counts.values,
+                    names=statut_counts.index,
+                    title="Répartition en pourcentage par Statut",
+                    color_discrete_sequence=px.colors.qualitative.Set2
                 )
-                st.plotly_chart(fig, width='stretch')
+                fig_pie_statut.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_pie_statut, width='stretch')
+            
+            with col2:
+                fig_bar_statut = px.bar(
+                    x=statut_counts.index,
+                    y=statut_counts.values,
+                    title="Nombre de lots par Statut",
+                    labels={'x': 'Statut', 'y': 'Nombre de lots'},
+                    color=statut_counts.values,
+                    color_continuous_scale='Greens'
+                )
+                fig_bar_statut.update_layout(showlegend=False)
+                st.plotly_chart(fig_bar_statut, width='stretch')
 

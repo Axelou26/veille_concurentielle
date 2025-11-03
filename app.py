@@ -971,8 +971,8 @@ try:
                                 key=f"data_editor_all_{extraction_key}"
                             )
                             
-                            # Mettre à jour le DataFrame dans session_state
-                            st.session_state[df_editable_key] = edited_df.copy()
+                            # NE PAS mettre à jour automatiquement le session_state ici
+                            # La mise à jour se fera uniquement lors du clic sur "Appliquer les modifications"
                             
                             # Bouton pour appliquer les modifications du tableau aux lots
                             col_apply1, col_refresh1 = st.columns([1, 1])
@@ -1013,6 +1013,9 @@ try:
                                         except NameError:
                                             # all_data n'est pas défini, ce n'est pas grave
                                             pass
+                                        
+                                        # Mettre à jour le DataFrame dans session_state maintenant que les modifications sont appliquées
+                                        st.session_state[df_editable_key] = edited_df.copy()
                                         
                                         st.session_state[lots_key] = lots_list
                                         st.success("✅ Modifications du tableau appliquées avec succès !")
@@ -1081,14 +1084,8 @@ try:
                                 key=f"data_editor_main_{extraction_key}"
                             )
                             
-                            # Mettre à jour le DataFrame principal avec les modifications
-                            for col in edited_df.columns:
-                                if col in st.session_state[df_editable_key].columns:
-                                    st.session_state[df_editable_key][col] = edited_df[col]
-                            for idx in range(len(edited_df)):
-                                for col in edited_df.columns:
-                                    if col in st.session_state[df_editable_key].columns and idx < len(st.session_state[df_editable_key]):
-                                        st.session_state[df_editable_key].iloc[idx, st.session_state[df_editable_key].columns.get_loc(col)] = edited_df.iloc[idx][col]
+                            # NE PAS mettre à jour automatiquement le session_state ici
+                            # La mise à jour se fera uniquement lors du clic sur "Appliquer les modifications"
                             
                             # Bouton pour appliquer les modifications du tableau aux lots
                             col_apply2, col_refresh2 = st.columns([1, 1])
@@ -1142,6 +1139,9 @@ try:
                                         except NameError:
                                             # all_data n'est pas défini, ce n'est pas grave
                                             pass
+                                        
+                                        # Mettre à jour le DataFrame dans session_state maintenant que les modifications sont appliquées
+                                        st.session_state[df_editable_key] = edited_df.copy()
                                         
                                         st.session_state[lots_key] = lots_list
                                         st.success("✅ Modifications du tableau appliquées avec succès !")
@@ -1278,71 +1278,87 @@ try:
                         with col_insert:
                             if st.button("💾 Insérer dans la base de données", type="primary"):
                                 try:
-                                    # NOUVEAU: Synchroniser automatiquement les modifications avant l'insertion
-                                    sync_lots_modifications()
+                                    # UTILISER UNIQUEMENT LE TABLEAU FINAL ACTUEL
+                                    # Lire directement depuis les widgets data_editor pour avoir les données actuelles
                                     
-                                    # Insérer chaque lot dans la base de données
                                     total_inserted = 0
-                                    extraction_key_insert = extracted_entries[0].get('lot_id', 'extraction_0') if extracted_entries else 'extraction_0'
-                                    lots_key_insert = f'lots_list_{extraction_key_insert}'
-                                    for i, extracted_info in enumerate(extracted_entries):
-                                        # NOUVEAU: Créer une ligne par lot détecté
-                                        lots_list = st.session_state.get(lots_key_insert, [])
-                                        
-                                        if lots_list:
-                                            # Insérer chaque lot individuellement
-                                            for lot_idx, lot in enumerate(lots_list):
-                                                # Créer les données pour ce lot spécifique
-                                                lot_data = {}
-                                                lot_data.update(extracted_info.get('valeurs_extraites', {}))
-                                                lot_data.update(extracted_info.get('valeurs_generees', {}))
-                                                
-                                                # Remplacer les données générales par les données spécifiques du lot
-                                                lot_data['lot_numero'] = lot.get('numero', lot_idx + 1)
-                                                lot_data['intitule_lot'] = lot.get('intitule', '')
-                                                lot_data['attributaire'] = lot.get('attributaire', '')
-                                                lot_data['produit_retenu'] = lot.get('produit_retenu', '')
-                                                lot_data['infos_complementaires'] = lot.get('infos_complementaires', '')
-                                                lot_data['montant_global_estime'] = lot.get('montant_estime', 0)
-                                                lot_data['montant_global_maxi'] = lot.get('montant_maximum', 0)
-                                                lot_data['quantite_minimum'] = lot.get('quantite_minimum', 0)
-                                                lot_data['quantites_estimees'] = lot.get('quantites_estimees', '')
-                                                lot_data['quantite_maximum'] = lot.get('quantite_maximum', 0)
-                                                lot_data['criteres_economique'] = lot.get('criteres_economique', '')
-                                                lot_data['criteres_techniques'] = lot.get('criteres_techniques', '')
-                                                lot_data['autres_criteres'] = lot.get('autres_criteres', '')
-                                                lot_data['rse'] = lot.get('rse', '')
-                                                lot_data['contribution_fournisseur'] = lot.get('contribution_fournisseur', '')
-                                                
-                                                # Ajouter un identifiant unique pour ce lot
-                                                lot_data['lot_id'] = f"LOT_{lot.get('numero', lot_idx + 1)}"
-                                                lot_data['reference_lot'] = f"{lot_data.get('reference_procedure', 'UNKNOWN')}_LOT_{lot.get('numero', lot_idx + 1)}"
-                                                
-                                                if lot_data:
-                                                    df_new = pd.DataFrame([lot_data])
-                                                    result = db_manager.insert_dataframe(df_new)
-                                                    
-                                                    if result.get('rows_inserted', 0) > 0 or result.get('rows_updated', 0) > 0:
-                                                        total_inserted += result.get('rows_inserted', 0) + result.get('rows_updated', 0)
-                                                        st.info(f"✅ Lot {lot.get('numero', lot_idx + 1)} inséré: {lot.get('intitule', '')[:50]}...")
-                                                    else:
-                                                        error_msg = result.get('errors', ['Erreur inconnue'])
-                                                        st.error(f"❌ Erreur insertion lot {lot.get('numero', lot_idx + 1)}: {error_msg[0] if error_msg else 'Erreur inconnue'}")
+                                    
+                                    # Récupérer le DataFrame actuel depuis les widgets data_editor
+                                    df_to_insert = None
+                                    
+                                    # Vérifier d'abord dans les widgets data_editor (données actuelles éditées)
+                                    data_editor_all_key = f"data_editor_all_{extraction_key}"
+                                    data_editor_main_key = f"data_editor_main_{extraction_key}"
+                                    
+                                    if show_all_columns:
+                                        # Mode toutes colonnes : utiliser le widget avec toutes les colonnes
+                                        if data_editor_all_key in st.session_state:
+                                            df_to_insert = st.session_state[data_editor_all_key].copy()
                                         else:
-                                            # Fallback: insérer comme avant si pas de lots détectés
-                                            all_values = {}
-                                            all_values.update(extracted_info.get('valeurs_extraites', {}))
-                                            all_values.update(extracted_info.get('valeurs_generees', {}))
+                                            # Fallback vers session_state si widget non trouvé
+                                            df_to_insert = st.session_state.get(df_editable_key, pd.DataFrame()).copy()
+                                    else:
+                                        # Mode colonnes principales : récupérer depuis le widget et compléter avec les autres colonnes
+                                        if data_editor_main_key in st.session_state:
+                                            # Récupérer les colonnes modifiées depuis le widget
+                                            df_simple = st.session_state[data_editor_main_key].copy()
+                                            # Compléter avec toutes les colonnes depuis session_state
+                                            df_full = st.session_state.get(df_editable_key, pd.DataFrame()).copy()
                                             
-                                            if all_values:
-                                                df_new = pd.DataFrame([all_values])
+                                            # Mettre à jour seulement les colonnes modifiées
+                                            for col in df_simple.columns:
+                                                if col in df_full.columns:
+                                                    df_full[col] = df_simple[col]
+                                            
+                                            df_to_insert = df_full
+                                        else:
+                                            # Fallback vers session_state
+                                            df_to_insert = st.session_state.get(df_editable_key, pd.DataFrame()).copy()
+                                    
+                                    if df_to_insert is None or df_to_insert.empty:
+                                        st.warning("⚠️ Aucune donnée dans le tableau à insérer")
+                                    else:
+                                        # Insérer chaque ligne du tableau actuel dans la base
+                                        for idx, row in df_to_insert.iterrows():
+                                            try:
+                                                # Convertir la ligne en dictionnaire et nettoyer les NaN
+                                                lot_data = {}
+                                                for col in df_to_insert.columns:
+                                                    value = row.get(col)
+                                                    if pd.notna(value):
+                                                        lot_data[col] = value
+                                                    else:
+                                                        lot_data[col] = None
+                                                
+                                                # S'assurer que les champs obligatoires sont présents
+                                                if 'lot_numero' in lot_data and pd.notna(lot_data['lot_numero']):
+                                                    lot_data['lot_numero'] = int(lot_data['lot_numero'])
+                                                
+                                                # Créer un identifiant unique si pas présent
+                                                if 'lot_id' not in lot_data or not lot_data.get('lot_id'):
+                                                    lot_num = lot_data.get('lot_numero', idx + 1)
+                                                    lot_data['lot_id'] = f"LOT_{lot_num}"
+                                                
+                                                if 'reference_lot' not in lot_data or not lot_data.get('reference_lot'):
+                                                    ref_proc = lot_data.get('reference_procedure', 'UNKNOWN')
+                                                    lot_num = lot_data.get('lot_numero', idx + 1)
+                                                    lot_data['reference_lot'] = f"{ref_proc}_LOT_{lot_num}"
+                                                
+                                                # Insérer la ligne
+                                                df_new = pd.DataFrame([lot_data])
                                                 result = db_manager.insert_dataframe(df_new)
                                                 
                                                 if result.get('rows_inserted', 0) > 0 or result.get('rows_updated', 0) > 0:
                                                     total_inserted += result.get('rows_inserted', 0) + result.get('rows_updated', 0)
+                                                    lot_num = lot_data.get('lot_numero', idx + 1)
+                                                    intitule = lot_data.get('intitule_lot', 'N/A')
+                                                    st.info(f"✅ Ligne {idx + 1} (Lot {lot_num}) insérée: {str(intitule)[:50]}...")
                                                 else:
                                                     error_msg = result.get('errors', ['Erreur inconnue'])
-                                                    st.error(f"❌ Erreur insertion lot {i+1}: {error_msg[0] if error_msg else 'Erreur inconnue'}")
+                                                    st.error(f"❌ Erreur insertion ligne {idx + 1}: {error_msg[0] if error_msg else 'Erreur inconnue'}")
+                                            except Exception as e:
+                                                st.error(f"❌ Erreur insertion ligne {idx + 1}: {e}")
+                                                continue
                                     
                                     if total_inserted > 0:
                                         st.success(f"✅ {total_inserted} ligne(s) insérée(s) dans la base de données (une ligne par lot)")

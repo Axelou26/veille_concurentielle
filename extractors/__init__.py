@@ -26,6 +26,7 @@ from .lot_detector import LotDetector
 from .validation_engine import ValidationEngine, ValidationResult
 from .file_type_detector import FileTypeDetector
 from .intelligent_post_processor import IntelligentPostProcessor
+from .extraction_cache import ExtractionCache
 
 __all__ = [
     'BaseExtractor',
@@ -37,7 +38,8 @@ __all__ = [
     'ValidationEngine',
     'ValidationResult',
     'FileTypeDetector',
-    'IntelligentPostProcessor'
+    'IntelligentPostProcessor',
+    'ExtractionCache'
 ]
 
 __version__ = "2.0.0"

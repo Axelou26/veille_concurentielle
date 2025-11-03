@@ -204,6 +204,10 @@ class TextExtractor(BaseExtractor):
             return 'montant'
         elif 'date' in field_name.lower():
             return 'date'
+        elif 'duree' in field_name.lower() or 'durée' in field_name.lower():
+            return 'duree'
+        elif 'reconduction' in field_name.lower():
+            return 'reconduction'
         elif 'reference' in field_name.lower():
             return 'reference'
         else:

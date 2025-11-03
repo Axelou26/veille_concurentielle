@@ -90,12 +90,19 @@ class LotDetectionStrategy(ABC):
             logger.debug(f"❌ Intitulé rejeté (commence par un chiffre): {intitule_trim[:50]}...")
             return False
         
+        # Rejeter les intitulés qui sont exactement "ARTICLE" ou commencent par "article"
+        if intitule_trim.upper().strip() == 'ARTICLE':
+            logger.debug(f"❌ Intitulé rejeté (est exactement 'ARTICLE'): {intitule_trim[:50]}...")
+            return False
+        
         # Vérifier si l'intitulé commence par des mots interdits
         forbidden_starts = [
             r'^accord-cadre',
             r'^uniquement',
             r'^ou\s',  # "ou" suivi d'un espace (pour éviter les mots comme "outil")
-            r'^sans majuscule'
+            r'^sans majuscule',
+            r'^article\s',  # "article" suivi d'un espace (pour éviter les articles de texte, pas les lots)
+            r'^article$'    # "article" seul (sans rien après)
         ]
         
         for pattern in forbidden_starts:
@@ -155,8 +162,9 @@ class LotDetectionStrategy(ABC):
         for word in technical_words:
             cleaned = re.sub(r'\s+' + re.escape(word) + r'\s*$', '', cleaned, flags=re.IGNORECASE)
         
-        # Supprimer les caractères de formatage
-        cleaned = re.sub(r'[^\w\s\-/()]', ' ', cleaned)
+        # Supprimer les caractères de formatage (mais préserver virgules, apostrophes, etc.)
+        # Ne supprimer que les caractères vraiment indésirables
+        cleaned = re.sub(r'[^\w\s\-/(),\.]', ' ', cleaned)  # Préserver virgules, points, apostrophes
         
         # Supprimer les espaces multiples après nettoyage
         cleaned = ' '.join(cleaned.split())
@@ -186,8 +194,23 @@ class LotDetectionStrategy(ABC):
                 matches = re.findall(pattern, text)
                 if matches:
                     try:
-                        montant1 = float(matches[0][0].replace(' ', '').replace(',', '.'))
-                        montant2 = float(matches[0][1].replace(' ', '').replace(',', '.'))
+                        # Nettoyer les montants en gérant le format français
+                        montant1_str = matches[0][0].strip()
+                        montant2_str = matches[0][1].strip()
+                        
+                        # Si format français (virgule comme séparateur décimal), convertir
+                        if ',' in montant1_str and '.' not in montant1_str.replace(',', '', 1):
+                            montant1_str = montant1_str.replace(' ', '').replace(',', '.')
+                        else:
+                            montant1_str = montant1_str.replace(' ', '').replace(',', '')
+                        
+                        if ',' in montant2_str and '.' not in montant2_str.replace(',', '', 1):
+                            montant2_str = montant2_str.replace(' ', '').replace(',', '.')
+                        else:
+                            montant2_str = montant2_str.replace(' ', '').replace(',', '')
+                        
+                        montant1 = float(montant1_str)
+                        montant2 = float(montant2_str)
                         montant_estime = montant1
                         montant_maximum = montant2
                         break
@@ -210,7 +233,7 @@ class StructuredTableStrategy(LotDetectionStrategy):
             
             # Pattern pour détecter les tableaux de lots structurés
             # Format: N° | Intitulé | Montant estimatif | Montant maximum
-            lot_pattern = r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)\s+(\d{1,3}(?:\s\d{3})*)\s*€?\s+(\d{1,3}(?:\s\d{3})*)\s*€?\s*(?:\n|$)'
+            lot_pattern = r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]+?)\s+(\d{1,3}(?:\s\d{3})*)\s*€?\s+(\d{1,3}(?:\s\d{3})*)\s*€?\s*(?:\n|$)'
             
             matches = re.findall(lot_pattern, text, re.MULTILINE)
             
@@ -228,13 +251,24 @@ class StructuredTableStrategy(LotDetectionStrategy):
                     if not self._is_valid_lot_intitule(intitule):
                         continue
                     
-                    # Nettoyer les montants
-                    montant_estime_clean = montant_estime.replace(' ', '').replace(',', '.')
-                    montant_max_clean = montant_max.replace(' ', '').replace(',', '.')
+                    # Nettoyer les montants en gérant le format français
+                    montant_estime_str = montant_estime.strip()
+                    montant_max_str = montant_max.strip()
+                    
+                    # Si format français (virgule comme séparateur décimal), convertir
+                    if ',' in montant_estime_str and '.' not in montant_estime_str.replace(',', '', 1):
+                        montant_estime_str = montant_estime_str.replace(' ', '').replace(',', '.')
+                    else:
+                        montant_estime_str = montant_estime_str.replace(' ', '').replace(',', '')
+                    
+                    if ',' in montant_max_str and '.' not in montant_max_str.replace(',', '', 1):
+                        montant_max_str = montant_max_str.replace(' ', '').replace(',', '.')
+                    else:
+                        montant_max_str = montant_max_str.replace(' ', '').replace(',', '')
                     
                     try:
-                        montant_estime_val = float(montant_estime_clean)
-                        montant_max_val = float(montant_max_clean)
+                        montant_estime_val = float(montant_estime_str)
+                        montant_max_val = float(montant_max_str)
                     except ValueError:
                         montant_estime_val = 0.0
                         montant_max_val = 0.0
@@ -295,7 +329,7 @@ class LineAnalysisStrategy(LotDetectionStrategy):
                     continue
                 
                 # Auto-détection: Si on trouve un pattern de lot (numéro + texte), on est probablement dans une section
-                if not in_lot_section and re.match(r'^(\d{1,3})\s+[A-Za-zÀ-ÖØ-öø-ÿ]', line):
+                if not in_lot_section and re.match(r'^(\d{1,3})\s+[\w]', line):
                     auto_detect_lot_section = True
                 
                 # Détecter la sortie de la section de lots - Conditions plus strictes pour éviter les faux positifs
@@ -340,55 +374,55 @@ class LineAnalysisStrategy(LotDetectionStrategy):
                 lot_match = None
                 
                 # Pattern 1: Format standard - capture jusqu'à la fin de ligne (amélioré pour multi-lignes)
-                lot_match = re.match(r'^(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\s+\d{1,3}(?:\s\d{3})*|$)', line)
+                lot_match = re.match(r'^(\d+)\s+([\w][\w\s/().,-]+?)(?:\s+\d{1,3}(?:\s\d{3})*|$)', line)
                 
                 # Pattern 1b: Format pour lots sur plusieurs lignes (sans montants sur la première ligne)
                 if not lot_match:
-                    lot_match = re.match(r'^(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\s*$)', line)
+                    lot_match = re.match(r'^(\d+)\s+([\w][\w\s/().,-]+?)(?:\s*$)', line)
                 
                 # Pattern 1b: Format avec montants sur la même ligne
                 if not lot_match:
-                    lot_match = re.match(r'^(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?', line)
+                    lot_match = re.match(r'^(\d+)\s+([\w][\w\s/().,-]+?)\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?', line)
                 
                 # Pattern 2: Format avec "LOT" ou "Lot" - capture jusqu'à la fin
                 if not lot_match:
-                    lot_match = re.match(r'^(?:LOT|Lot)\s*(\d+)[\s:-]+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\s+\d|$)', line)
+                    lot_match = re.match(r'^(?:LOT|Lot)\s*(\d+)[\s:-]+([\w][\w\s/().,-]+?)(?:\s+\d|$)', line)
                 
                 # Pattern 2b: Format "LOT" avec montants sur la même ligne
                 if not lot_match:
-                    lot_match = re.match(r'^(?:LOT|Lot)\s*(\d+)[\s:-]+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?', line)
+                    lot_match = re.match(r'^(?:LOT|Lot)\s*(\d+)[\s:-]+([\w][\w\s/().,-]+?)\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?', line)
                 
                 # Pattern 3: Format avec tirets ou points - capture jusqu'à la fin
                 if not lot_match:
-                    lot_match = re.match(r'^(\d+)[\s.-]+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\s+\d|$)', line)
+                    lot_match = re.match(r'^(\d+)[\s.-]+([\w][\w\s/().,-]+?)(?:\s+\d|$)', line)
                 
                 # Pattern 4: Format très permissif - capture tout le reste
                 if not lot_match:
-                    lot_match = re.match(r'^(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+)', line)
+                    lot_match = re.match(r'^(\d+)\s+([\w][\w\s/().,-]+)', line)
                 
                 # Pattern 5: Format spécifique pour lots 13 et 14 (multi-lignes)
                 if not lot_match:
-                    lot_match = re.match(r'^(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\s*$)', line)
+                    lot_match = re.match(r'^(\d+)\s+([\w][\w\s/().,-]+?)(?:\s*$)', line)
                 
                 # Pattern 6: Format avec parenthèses - NOUVEAU
                 if not lot_match:
-                    lot_match = re.match(r'^(\d+)\s*[)]\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+)', line)
+                    lot_match = re.match(r'^(\d+)\s*[)]\s+([\w][\w\s/().,-]+)', line)
                 
                 # Pattern 7: Format avec numéro entre parenthèses - NOUVEAU
                 if not lot_match:
-                    lot_match = re.match(r'^\s*[\(]?\s*(\d+)\s*[\)]\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+)', line)
+                    lot_match = re.match(r'^\s*[\(]?\s*(\d+)\s*[\)]\s+([\w][\w\s/().,-]+)', line)
                 
                 # Pattern 8: Format avec "N°" ou "n°" - NOUVEAU
                 if not lot_match:
-                    lot_match = re.match(r'^(?:N°|n°|N|n)\s*(\d+)[\s:-]+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+)', line)
+                    lot_match = re.match(r'^(?:N°|n°|N|n)\s*(\d+)[\s:-]+([\w][\w\s/().,-]+)', line)
                 
                 # Pattern 9: Format très permissif sans majuscule au début - NOUVEAU
                 if not lot_match:
-                    lot_match = re.match(r'^(\d+)\s+([a-zà-öø-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+)', line)
+                    lot_match = re.match(r'^(\d+)\s+([\w][\w\s/().,-]+)', line)
                 
                 # Pattern 10: Format avec tabulation ou espaces multiples - NOUVEAU
                 if not lot_match:
-                    lot_match = re.match(r'^(\d+)\s{2,}([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+)', line)
+                    lot_match = re.match(r'^(\d+)\s{2,}([\w][\w\s/().,-]+)', line)
                 
                 # Détecter les lots partout dans le document (même sans section explicite)
                 # Mais avec une priorité plus élevée si on est dans une section
@@ -421,8 +455,22 @@ class LineAnalysisStrategy(LotDetectionStrategy):
                     # Si le pattern contient des montants, les extraire directement
                     if len(lot_match.groups()) >= 4:
                         try:
-                            montant1_str = lot_match.group(3).replace(' ', '').replace(',', '.')
-                            montant2_str = lot_match.group(4).replace(' ', '').replace(',', '.')
+                            # Nettoyer les montants en gérant le format français
+                            montant1_str = lot_match.group(3).strip()
+                            montant2_str = lot_match.group(4).strip()
+                            # Si format français (virgule comme séparateur décimal), convertir
+                            if ',' in montant1_str and '.' not in montant1_str.replace(',', '', 1):
+                                # Format français: "1 234,56" -> "1234.56"
+                                montant1_str = montant1_str.replace(' ', '').replace(',', '.')
+                            else:
+                                # Format anglais ou sans décimales
+                                montant1_str = montant1_str.replace(' ', '').replace(',', '')
+                            
+                            if ',' in montant2_str and '.' not in montant2_str.replace(',', '', 1):
+                                montant2_str = montant2_str.replace(' ', '').replace(',', '.')
+                            else:
+                                montant2_str = montant2_str.replace(' ', '').replace(',', '')
+                            
                             montant1 = float(montant1_str)
                             montant2 = float(montant2_str)
                             current_lot.montant_estime = montant1
@@ -439,8 +487,23 @@ class LineAnalysisStrategy(LotDetectionStrategy):
                     montant_match = re.search(r'(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?', line)
                     if montant_match:
                         try:
-                            montant1 = float(montant_match.group(1).replace(' ', '').replace(',', '.'))
-                            montant2 = float(montant_match.group(2).replace(' ', '').replace(',', '.'))
+                            # Nettoyer les montants en gérant le format français
+                            montant1_str = montant_match.group(1).strip()
+                            montant2_str = montant_match.group(2).strip()
+                            
+                            # Si format français (virgule comme séparateur décimal), convertir
+                            if ',' in montant1_str and '.' not in montant1_str.replace(',', '', 1):
+                                montant1_str = montant1_str.replace(' ', '').replace(',', '.')
+                            else:
+                                montant1_str = montant1_str.replace(' ', '').replace(',', '')
+                            
+                            if ',' in montant2_str and '.' not in montant2_str.replace(',', '', 1):
+                                montant2_str = montant2_str.replace(' ', '').replace(',', '.')
+                            else:
+                                montant2_str = montant2_str.replace(' ', '').replace(',', '')
+                            
+                            montant1 = float(montant1_str)
+                            montant2 = float(montant2_str)
                             current_lot.montant_estime = montant1
                             current_lot.montant_maximum = montant2
                             logger.debug(f"💰 Montants détectés pour lot {current_lot.numero}: {montant1} € - {montant2} €")
@@ -485,7 +548,7 @@ class LineAnalysisStrategy(LotDetectionStrategy):
         try:
             # Pattern pour détecter les lots collés sur la même ligne
             # Exemple: "20 Micro-manipulateur... 400 000 € 800 000 € 21 Station complète..."
-            collated_lots_pattern = r'(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\s+(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?)?(?=\s+\d+\s+[A-Za-zÀ-ÖØ-öø-ÿ]|$)'
+            collated_lots_pattern = r'(\d+)\s+([\w][\w\s/().,-]+?)(?:\s+(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?)?(?=\s+\d+\s+[\w]|$)'
             
             matches = re.findall(collated_lots_pattern, line)
             
@@ -518,8 +581,23 @@ class LineAnalysisStrategy(LotDetectionStrategy):
                     # Extraire les montants si présents
                     if montant1_str and montant2_str:
                         try:
-                            montant1 = float(montant1_str.replace(' ', '').replace(',', '.'))
-                            montant2 = float(montant2_str.replace(' ', '').replace(',', '.'))
+                            # Nettoyer les montants en gérant le format français
+                            montant1_clean = montant1_str.strip()
+                            montant2_clean = montant2_str.strip()
+                            
+                            # Si format français (virgule comme séparateur décimal), convertir
+                            if ',' in montant1_clean and '.' not in montant1_clean.replace(',', '', 1):
+                                montant1_clean = montant1_clean.replace(' ', '').replace(',', '.')
+                            else:
+                                montant1_clean = montant1_clean.replace(' ', '').replace(',', '')
+                            
+                            if ',' in montant2_clean and '.' not in montant2_clean.replace(',', '', 1):
+                                montant2_clean = montant2_clean.replace(' ', '').replace(',', '.')
+                            else:
+                                montant2_clean = montant2_clean.replace(' ', '').replace(',', '')
+                            
+                            montant1 = float(montant1_clean)
+                            montant2 = float(montant2_clean)
                             lot.montant_estime = montant1
                             lot.montant_maximum = montant2
                             logger.debug(f"💰 Lot {numero} collé: {intitule[:30]}... - {montant1}€/{montant2}€")
@@ -550,12 +628,12 @@ class LineAnalysisStrategy(LotDetectionStrategy):
             # Pattern pour détecter un lot collé à la fin d'une ligne
             # Pattern amélioré pour détecter les lots sans montants
             collated_patterns = [
-                r'(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*\d+\s+sur\s+\d+\s+(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\s|$)',
-                r'\d+\s+sur\s+\d+\s+(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\s|$)',
-                r'(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?=\s+\d+\s+[A-Za-zÀ-ÖØ-öø-ÿ]|$)',
-                r'(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?=\s*$)',
+                r'(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*\d+\s+sur\s+\d+\s+(\d+)\s+([\w][\w\s/().,-]+?)(?:\s|$)',
+                r'\d+\s+sur\s+\d+\s+(\d+)\s+([\w][\w\s/().,-]+?)(?:\s|$)',
+                r'(\d+)\s+([\w][\w\s/().,-]+?)(?=\s+\d+\s+[\w]|$)',
+                r'(\d+)\s+([\w][\w\s/().,-]+?)(?=\s*$)',
                 # Pattern pour capturer l'intitulé complet jusqu'à la fin de ligne
-                r'(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+)'
+                r'(\d+)\s+([\w][\w\s/().,-]+)'
             ]
             
             # Tester tous les patterns
@@ -632,7 +710,7 @@ class LineAnalysisStrategy(LotDetectionStrategy):
 
                 # Si on trouve un nouveau lot, arrêter
                 if (
-                    re.match(r'^\d+\s+[A-Za-zÀ-ÖØ-öø-ÿ]', next_line)
+                    re.match(r'^\d+\s+[\w]', next_line)
                     or re.match(r'^(?:LOT|Lot)\s*\d+', next_line)
                     or re.match(r'^\d+[.-]', next_line)
                 ):
@@ -646,8 +724,23 @@ class LineAnalysisStrategy(LotDetectionStrategy):
                 montant_match = re.search(r'(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?', next_line)
                 if montant_match:
                     try:
-                        montant1 = float(montant_match.group(1).replace(' ', '').replace(',', '.'))
-                        montant2 = float(montant_match.group(2).replace(' ', '').replace(',', '.'))
+                        # Nettoyer les montants en gérant le format français
+                        montant1_str = montant_match.group(1).strip()
+                        montant2_str = montant_match.group(2).strip()
+                        
+                        # Si format français (virgule comme séparateur décimal), convertir
+                        if ',' in montant1_str and '.' not in montant1_str.replace(',', '', 1):
+                            montant1_str = montant1_str.replace(' ', '').replace(',', '.')
+                        else:
+                            montant1_str = montant1_str.replace(' ', '').replace(',', '')
+                        
+                        if ',' in montant2_str and '.' not in montant2_str.replace(',', '', 1):
+                            montant2_str = montant2_str.replace(' ', '').replace(',', '.')
+                        else:
+                            montant2_str = montant2_str.replace(' ', '').replace(',', '')
+                        
+                        montant1 = float(montant1_str)
+                        montant2 = float(montant2_str)
                         current_lot.montant_estime = montant1
                         current_lot.montant_maximum = montant2
                         logger.debug(f"💰 Montants trouvés pour lot {current_lot.numero}: {montant1}€/{montant2}€")
@@ -665,10 +758,10 @@ class LineAnalysisStrategy(LotDetectionStrategy):
                     and not re.match(r'^[A-Z]{2,}\s*$', next_line)
                     and not re.match(r'^(?:LOT|Lot)\s*\d+', next_line)
                     and not re.match(r'^\d+[.-]', next_line)
-                    and not re.match(r'^\d+\s+[A-Za-zÀ-ÖØ-öø-ÿ]', next_line)
+                    and not re.match(r'^\d+\s+[\w]', next_line)
                 ):
                     # Vérifier que ce n'est pas un nouveau lot (pattern plus strict)
-                    if not re.match(r'^\d+\s+[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ]', next_line):
+                    if not re.match(r'^\d+\s+[\w][\w]', next_line):
                         if current_lot.intitule and not current_lot.intitule.endswith(' '):
                             current_lot.intitule += ' '
                         current_lot.intitule += next_line
@@ -695,7 +788,7 @@ class MultiLineTitlesStrategy(LotDetectionStrategy):
             logger.debug("🔍 Détection des intitulés multi-lignes...")
             
             # Pattern très permissif pour capturer les intitulés multi-lignes
-            multi_line_pattern = r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)(?:\n(?!\d+\s)[A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)*(?=\n\d+\s|\n\n|$)'
+            multi_line_pattern = r'(?:^|\n)(\d+)\s+([\w][^\W\d_\s/-]+?)(?:\n(?!\d+\s)[^\W\d_\s/-]+?)*(?=\n\d+\s|\n\n|$)'
             
             matches = re.findall(multi_line_pattern, text, re.MULTILINE | re.DOTALL)
             
@@ -781,71 +874,71 @@ class FlexiblePatternsStrategy(LotDetectionStrategy):
             # Patterns flexibles pour détecter les lots
             flexible_patterns = [
                 # Pattern 1: Numéro + intitulé multi-lignes complet
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\n(?!\d+\s)[A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)*(?=\n\d+\s|\n\n|$)',
+                r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]+?)(?:\n(?!\d+\s)[\w\s/().-]+?)*(?=\n\d+\s|\n\n|$)',
                 # Pattern 2: Numéro + intitulé multi-lignes avec montants
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\n(?!\d+\s)[A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)*\s+(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?',
+                r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]+?)(?:\n(?!\d+\s)[\w\s/().-]+?)*\s+(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?',
                 # Pattern 3: Format tableau très permissif
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)(?:\n(?!\d+\s)[A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)*\s+(\d{1,3}(?:\s\d{3})*)\s+(\d{1,3}(?:\s\d{3})*)\s*',
+                r'(?:^|\n)(\d+)\s+([\w][^\W\d_\s/-]+?)(?:\n(?!\d+\s)[^\W\d_\s/-]+?)*\s+(\d{1,3}(?:\s\d{3})*)\s+(\d{1,3}(?:\s\d{3})*)\s*',
                 # Pattern 4: Format très permissif multi-lignes
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\n(?!\d+\s)[A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)*',
+                r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]+?)(?:\n(?!\d+\s)[\w\s/().-]+?)*',
                 # Pattern 5: Format tableau précis
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)\s+(\d{1,3}(?:\s\d{3})*)\s+(\d{1,3}(?:\s\d{3})*)\s*(?:\n|$)',
+                r'(?:^|\n)(\d+)\s+([\w][^\W\d_\s/-]+?)\s+(\d{1,3}(?:\s\d{3})*)\s+(\d{1,3}(?:\s\d{3})*)\s*(?:\n|$)',
                 # Pattern 6: Format avec caractères spéciaux
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)\s+(\d{1,3}(?:\s\d{3})*)\s*[€]\s+(\d{1,3}(?:\s\d{3})*)\s*[€]',
+                r'(?:^|\n)(\d+)\s+([\w][^\W\d_\s/-]+?)\s+(\d{1,3}(?:\s\d{3})*)\s*[€]\s+(\d{1,3}(?:\s\d{3})*)\s*[€]',
                 # Pattern 7: Format plus permissif
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)\s+(\d{1,3}(?:\s\d{3})*)\s+(\d{1,3}(?:\s\d{3})*)',
+                r'(?:^|\n)(\d+)\s+([\w][^\W\d_\s/-]+?)\s+(\d{1,3}(?:\s\d{3})*)\s+(\d{1,3}(?:\s\d{3})*)',
                 # Pattern 8: Format avec montants dans l'intitulé
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)\s+(\d{1,3}(?:\s\d{3})*)\s+(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*',
+                r'(?:^|\n)(\d+)\s+([\w][^\W\d_\s/-]+?)\s+(\d{1,3}(?:\s\d{3})*)\s+(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*',
                 # Pattern 9: Numéro + Intitulé + Montant
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)\s+(\d{1,3}(?:\s\d{3})*)\s*[€]',
+                r'(?:^|\n)(\d+)\s+([\w][^\W\d_\s/-]+?)\s+(\d{1,3}(?:\s\d{3})*)\s*[€]',
                 # Pattern 10: Lot + Numéro + Intitulé
-                r'(?:lot|Lot)\s*(\d+)[\s:]+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)(?:\n|$)',
+                r'(?:lot|Lot)\s*(\d+)[\s:]+([\w][^\W\d_\s/-]+?)(?:\n|$)',
                 # Pattern 11: Numéro + Description + Montant
                 r'(?:^|\n)(\d+)\s+([^€\n]{10,100})\s+(\d{1,3}(?:\s\d{3})*)\s*[€]',
                 # Pattern 12: Format très général
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]{10,80})(?:\n|$)',
+                r'(?:^|\n)(\d+)\s+([\w][^\W\d_\s/-]{10,80})(?:\n|$)',
                 # Pattern 13: Format avec tirets ou points
-                r'(?:^|\n)(\d+)[\s.-]+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]{10,80})(?:\n|$)',
+                r'(?:^|\n)(\d+)[\s.-]+([\w][^\W\d_\s/-]{10,80})(?:\n|$)',
                 # Pattern 14: Format avec parenthèses
-                r'(?:^|\n)(\d+)\s*\(([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]{10,80})\)(?:\n|$)',
+                r'(?:^|\n)(\d+)\s*\(([\w][^\W\d_\s/-]{10,80})\)(?:\n|$)',
                 # Pattern 15: Format très permissif
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]{5,100})(?:\n|$)',
+                r'(?:^|\n)(\d+)\s+([\w][^\W\d_\s/-]{5,100})(?:\n|$)',
                 # Pattern 16: Format avec "Article" ou "Section"
-                r'(?:article|Article|section|Section)\s*(\d+)[\s:]+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]{10,80})(?:\n|$)',
+                r'(?:article|Article|section|Section)\s*(\d+)[\s:]+([\w][^\W\d_\s/-]{10,80})(?:\n|$)',
                 # Pattern 17: Format très permissif pour noms longs
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/()-]{15,150})(?:\s+\d|$|\n)',
+                r'(?:^|\n)(\d+)\s+([\w][^\W\d_\s/()-]{15,150})(?:\s+\d|$|\n)',
                 # Pattern 18: Format avec caractères spéciaux étendus
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/()-]{10,120})(?:\s+\d|$|\n)',
+                r'(?:^|\n)(\d+)\s+([\w][^\W\d_\s/()-]{10,120})(?:\s+\d|$|\n)',
                 # Pattern 19: Format multi-mots avec continuation
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/()-]+?)(?:\s+\d{1,3}(?:\s\d{3})*|$|\n)',
+                r'(?:^|\n)(\d+)\s+([\w][^\W\d_\s/()-]+?)(?:\s+\d{1,3}(?:\s\d{3})*|$|\n)',
                 # Pattern 20: Format très général pour descriptions longues
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]{10,200})(?:\s+\d|$|\n)',
+                r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]{10,200})(?:\s+\d|$|\n)',
                 # Pattern 21: Format avec "Prestation" ou "Service"
-                r'(?:prestation|Prestation|service|Service)\s*(\d+)[\s:]+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]{10,80})(?:\n|$)',
+                r'(?:prestation|Prestation|service|Service)\s*(\d+)[\s:]+([\w][^\W\d_\s/-]{10,80})(?:\n|$)',
                 # Pattern 22: Format simple pour noms courts
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]{5,50})(?:\s|$)',
+                r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]{5,50})(?:\s|$)',
                 # Pattern 23: Format très simple
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\s|$)',
+                r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]+?)(?:\s|$)',
                 # Pattern 24: Format avec "LOT" ou "Lot" - capture jusqu'à la fin
-                r'(?:^|\n)(?:LOT|Lot)\s*(\d+)[\s:-]+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\s+\d|$)',
+                r'(?:^|\n)(?:LOT|Lot)\s*(\d+)[\s:-]+([\w][\w\s/().,-]+?)(?:\s+\d|$)',
                 # Pattern 25: Format "LOT" très permissif
-                r'(?:^|\n)(?:LOT|Lot)\s*(\d+)[\s:-]+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+)',
+                r'(?:^|\n)(?:LOT|Lot)\s*(\d+)[\s:-]+([\w][\w\s/().,-]+)',
                 # Pattern 26: Format ultra-permissif pour noms très longs
-                r'(?:^|\n)(?:LOT|Lot)\s*(\d+)[\s:-]+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\s|$)',
+                r'(?:^|\n)(?:LOT|Lot)\s*(\d+)[\s:-]+([\w][\w\s/().,-]+?)(?:\s|$)',
                 # Pattern 27: Format avec numéro seul
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)(?:\s|$)',
+                r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]+?)(?:\s|$)',
                 # Pattern 28: Format ultra-simple
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+)',
+                r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]+)',
                 # Pattern 29: Format avec montants sur la même ligne
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?',
+                r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]+?)\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?',
                 # Pattern 30: Format "LOT" avec montants
-                r'(?:^|\n)(?:LOT|Lot)\s*(\d+)[\s:-]+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?',
+                r'(?:^|\n)(?:LOT|Lot)\s*(\d+)[\s:-]+([\w][\w\s/().,-]+?)\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?\s*-\s*(\d{1,3}(?:\s\d{3})*)\s*[€]?',
                 # Pattern 31: Format générique avec montants (virgules)
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)\s*-\s*(\d{1,3}(?:,\d{3})*)\s*[€]?\s*-\s*(\d{1,3}(?:,\d{3})*)\s*[€]?',
+                r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]+?)\s*-\s*(\d{1,3}(?:,\d{3})*)\s*[€]?\s*-\s*(\d{1,3}(?:,\d{3})*)\s*[€]?',
                 # Pattern 32: Format générique avec montants (sans espaces)
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)\s*-\s*(\d+)[€]?\s*-\s*(\d+)[€]?',
+                r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]+?)\s*-\s*(\d+)[€]?\s*-\s*(\d+)[€]?',
                 # Pattern 33: Format générique avec montants (k€)
-                r'(?:^|\n)(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/().-]+?)\s*-\s*(\d+(?:\.\d+)?k)[€]?\s*-\s*(\d+(?:\.\d+)?k)[€]?'
+                r'(?:^|\n)(\d+)\s+([\w][\w\s/().,-]+?)\s*-\s*(\d+(?:\.\d+)?k)[€]?\s*-\s*(\d+(?:\.\d+)?k)[€]?'
             ]
             
             # Essayer tous les patterns et garder le meilleur résultat
@@ -978,9 +1071,9 @@ class ExcelTableStrategy(LotDetectionStrategy):
             
             # Pattern pour les lignes de tableau Excel
             excel_patterns = [
-                r'(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)',
-                r'(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)\s+(\d+(?:[.,]\d+)?)',
-                r'(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s/-]+?)'
+                r'(\d+)\s+([\w][^\W\d_\s/-]+?)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)',
+                r'(\d+)\s+([\w][^\W\d_\s/-]+?)\s+(\d+(?:[.,]\d+)?)',
+                r'(\d+)\s+([\w][^\W\d_\s/-]+?)'
             ]
             
             for pattern in excel_patterns:

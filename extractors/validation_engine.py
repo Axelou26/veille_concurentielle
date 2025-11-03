@@ -146,6 +146,14 @@ class ValidationEngine:
             result.confidence = min(weighted_score, 1.0)
             result.is_valid = result.confidence >= 0.6 and len(result.errors) == 0
             
+            # Correction automatique des incohérences
+            corrected_data = self.auto_correct_data(data)
+            if corrected_data != data and '_auto_corrections' in corrected_data:
+                result.metadata['auto_corrections'] = corrected_data['_auto_corrections']
+                # Utiliser les données corrigées pour le reste de la validation
+                data = corrected_data.copy()
+                data.pop('_auto_corrections', None)
+            
             # Génération des suggestions
             result.suggestions = self._generate_suggestions(data, result)
             
@@ -615,6 +623,111 @@ class ValidationEngine:
             suggestions.append("Données de bonne qualité")
         
         return suggestions
+    
+    def auto_correct_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Corrige automatiquement les incohérences détectées dans les données
+        
+        Args:
+            data: Données à corriger
+            
+        Returns:
+            Données corrigées
+        """
+        corrected_data = data.copy()
+        corrections_made = []
+        
+        try:
+            # Correction 1: Si date_limite est passée mais pas de statut
+            if corrected_data.get('date_limite') and not corrected_data.get('statut'):
+                try:
+                    date_limite = self._parse_date(corrected_data['date_limite'])
+                    if date_limite and date_limite < datetime.now():
+                        # Date limite passée sans attribution → probablement clôturé
+                        if not corrected_data.get('date_attribution') and not corrected_data.get('attributaire'):
+                            corrected_data['statut'] = 'Clôturé'
+                            corrections_made.append("Statut 'Clôturé' ajouté (date limite passée)")
+                except Exception as e:
+                    logger.debug(f"Erreur correction statut depuis date_limite: {e}")
+            
+            # Correction 2: Si montant_maxi < montant_estime, inverser
+            if (corrected_data.get('montant_global_maxi') and 
+                corrected_data.get('montant_global_estime')):
+                try:
+                    # Nettoyer et convertir les montants
+                    maxi_str = str(corrected_data['montant_global_maxi']).replace(' ', '').replace(',', '.').replace('€', '')
+                    estime_str = str(corrected_data['montant_global_estime']).replace(' ', '').replace(',', '.').replace('€', '')
+                    
+                    maxi_val = float(maxi_str) if maxi_str else 0
+                    estime_val = float(estime_str) if estime_str else 0
+                    
+                    if maxi_val > 0 and estime_val > 0 and maxi_val < estime_val:
+                        # Inverser les montants
+                        temp = corrected_data['montant_global_maxi']
+                        corrected_data['montant_global_maxi'] = corrected_data['montant_global_estime']
+                        corrected_data['montant_global_estime'] = temp
+                        corrections_made.append("Montants inversés (maxi < estimé)")
+                except (ValueError, TypeError) as e:
+                    logger.debug(f"Erreur correction montants: {e}")
+            
+            # Correction 3: Générer statut depuis attributaire ou date_attribution
+            if not corrected_data.get('statut'):
+                if corrected_data.get('date_attribution'):
+                    try:
+                        date_attr = self._parse_date(corrected_data['date_attribution'])
+                        if date_attr and date_attr.year >= 2000:
+                            corrected_data['statut'] = 'Attribué'
+                            corrections_made.append("Statut 'Attribué' ajouté (date attribution présente)")
+                    except:
+                        pass
+                elif corrected_data.get('attributaire'):
+                    attributaire = str(corrected_data['attributaire']).strip()
+                    if len(attributaire) > 2:
+                        corrected_data['statut'] = 'Attribué'
+                        corrections_made.append("Statut 'Attribué' ajouté (attributaire présent)")
+            
+            # Correction 4: Vérifier et corriger le format des dates
+            for date_field in ['date_limite', 'date_attribution']:
+                if corrected_data.get(date_field):
+                    try:
+                        date_parsed = self._parse_date(corrected_data[date_field])
+                        if date_parsed:
+                            # Normaliser le format de la date
+                            corrected_data[date_field] = date_parsed.strftime('%d/%m/%Y')
+                        else:
+                            # Essayer de nettoyer la date
+                            cleaned_date = re.sub(r'[^\d/\-]', '', str(corrected_data[date_field]))
+                            if re.match(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}', cleaned_date):
+                                corrected_data[date_field] = cleaned_date.replace('-', '/')
+                                corrections_made.append(f"Format de date normalisé pour {date_field}")
+                    except Exception as e:
+                        logger.debug(f"Erreur correction format date {date_field}: {e}")
+            
+            # Correction 5: Vérifier cohérence nbr_lots avec présence de lots
+            if corrected_data.get('nbr_lots'):
+                try:
+                    nbr_lots = int(str(corrected_data['nbr_lots']))
+                    if nbr_lots == 0 and (corrected_data.get('lot_numero') or corrected_data.get('intitule_lot')):
+                        # Si on a des lots mais nbr_lots = 0, corriger
+                        corrected_data['nbr_lots'] = 1
+                        corrections_made.append("nbr_lots corrigé (lots présents mais nbr_lots=0)")
+                    elif nbr_lots > 0 and not corrected_data.get('lot_numero') and not corrected_data.get('intitule_lot'):
+                        # Si nbr_lots > 0 mais pas de lot, peut-être que c'est mono
+                        # Mais on ne corrige pas automatiquement, juste un avertissement
+                        pass
+                except (ValueError, TypeError):
+                    pass
+            
+            if corrections_made:
+                logger.info(f"✅ Corrections automatiques appliquées: {', '.join(corrections_made)}")
+                corrected_data['_auto_corrections'] = corrections_made
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la correction automatique: {e}")
+            # Retourner les données originales en cas d'erreur
+            return data
+        
+        return corrected_data
     
     def get_performance_metrics(self) -> Dict[str, Any]:
         """Retourne les métriques de performance"""
