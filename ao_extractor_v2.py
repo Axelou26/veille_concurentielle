@@ -10,6 +10,7 @@ import pandas as pd
 import logging
 import time
 import traceback
+import hashlib
 from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 import os
@@ -22,6 +23,7 @@ from extractors import (
 from extractors.file_type_detector import FileTypeDetector
 from extractors.intelligent_post_processor import IntelligentPostProcessor
 from extractors.database_context_learner import DatabaseContextLearner
+from extractors.extraction_cache import ExtractionCache
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,9 @@ class AOExtractorV2:
         # Initialiser le post-processeur intelligent
         self.intelligent_processor = IntelligentPostProcessor(enable_improver=True)
         
+        # Initialiser le cache intelligent pour les extractions
+        self.extraction_cache = ExtractionCache(max_size=1000)
+        
         # Métriques de performance améliorées
         self.performance_metrics = {
             'total_extractions': 0,
@@ -123,6 +128,26 @@ class AOExtractorV2:
         try:
             self.performance_metrics['total_extractions'] += 1
             logger.info(f"📁 Extraction depuis le fichier: {uploaded_file.name}")
+            
+            # Initialiser cache_key pour utilisation ultérieure
+            cache_key = None
+            
+            # Vérifier le cache avant d'extraire
+            try:
+                # Lire le contenu pour générer la clé de cache
+                uploaded_file.seek(0)
+                file_content = uploaded_file.read()
+                uploaded_file.seek(0)
+                
+                cache_key = self.extraction_cache.get_cache_key(file_content, uploaded_file.name)
+                cached_result = self.extraction_cache.get(cache_key)
+                
+                if cached_result:
+                    logger.info(f"✅ Résultat récupéré depuis le cache pour {uploaded_file.name}")
+                    self.performance_metrics['successful_extractions'] += 1
+                    return cached_result
+            except Exception as e:
+                logger.debug(f"Erreur vérification cache: {e}")
             
             # Déterminer le type de fichier avec le détecteur unifié
             file_type = self.file_type_detector.detect(
@@ -196,6 +221,13 @@ class AOExtractorV2:
             
             # Les valeurs générées (segment, famille) sont déjà créées dans generate_missing_values()
             # via les méthodes _classify_segment() et _classify_famille() qui utilisent database_learner
+            
+            # Sauvegarder dans le cache (si cache_key disponible)
+            if cache_key:
+                try:
+                    self.extraction_cache.set(cache_key, extracted_entries)
+                except Exception as e:
+                    logger.debug(f"Erreur sauvegarde cache: {e}")
             
             logger.info(f"✅ Extraction terminée: {len(extracted_entries)} entrées en {extraction_time:.2f}s")
             return extracted_entries
@@ -557,7 +589,71 @@ class AOExtractorV2:
                 metrics['lot_detector']['successful_detections'] / 
                 metrics['lot_detector']['total_detections'] * 100
                 if metrics['lot_detector']['total_detections'] > 0 else 0
+            ),
+            'cache_stats': self.extraction_cache.get_stats()
+        }
+    
+    def get_quality_metrics(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Calcule des métriques de qualité détaillées pour les données extraites
+        
+        Args:
+            extracted_data: Données extraites à évaluer
+            
+        Returns:
+            Dictionnaire des métriques de qualité
+        """
+        try:
+            total_fields = len(extracted_data)
+            filled_fields = sum(1 for v in extracted_data.values() if v and str(v).strip())
+            completeness_score = (filled_fields / total_fields * 100) if total_fields > 0 else 0
+            
+            # Calculer la confiance basée sur la validation
+            validation_result = self.validate_extraction(extracted_data)
+            confidence_score = validation_result.confidence * 100 if validation_result else 0
+            
+            # Calculer la précision des champs (basé sur les validations de champs)
+            field_accuracy = {}
+            if validation_result and validation_result.field_validations:
+                for field, validation in validation_result.field_validations.items():
+                    field_accuracy[field] = {
+                        'valid': validation.get('valid', False),
+                        'confidence': validation.get('confidence', 0.0) * 100
+                    }
+            
+            # Évaluer la qualité du document
+            document_quality = 'high' if confidence_score >= 80 else 'medium' if confidence_score >= 60 else 'low'
+            
+            # Déterminer si une revue est recommandée
+            needs_review = (
+                confidence_score < 70 or 
+                completeness_score < 50 or
+                (validation_result and len(validation_result.errors) > 0)
             )
+            
+            return {
+                'completeness_score': round(completeness_score, 2),
+                'confidence_score': round(confidence_score, 2),
+                'field_accuracy': field_accuracy,
+                'document_quality': document_quality,
+                'needs_review': needs_review,
+                'total_fields': total_fields,
+                'filled_fields': filled_fields,
+                'validation_issues': len(validation_result.issues) if validation_result else 0,
+                'validation_errors': len(validation_result.errors) if validation_result else 0,
+                'validation_warnings': len(validation_result.warnings) if validation_result else 0,
+                'auto_corrections': validation_result.metadata.get('auto_corrections', []) if validation_result else []
+            }
+            
+        except Exception as e:
+            logger.error(f"Erreur calcul métriques qualité: {e}")
+            return {
+                'completeness_score': 0.0,
+                'confidence_score': 0.0,
+                'field_accuracy': {},
+                'document_quality': 'unknown',
+                'needs_review': True,
+                'error': str(e)
         }
     
     def __str__(self) -> str:
